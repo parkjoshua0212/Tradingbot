@@ -1,0 +1,233 @@
+"""Mock-HTTP tests only; no network. Run: python test_kis.py"""
+import json
+import os
+import tempfile
+
+import kis_client
+import trading
+from kis_client import KISClient, KISError, RateLimiter
+
+
+class Resp:
+    def __init__(self, status=200, body=None):
+        self.status_code, self._b = status, body if body is not None else {}
+        self.content, self.text = json.dumps(self._b).encode(), json.dumps(self._b)
+
+    def json(self):
+        return self._b
+
+
+class FakeSession:
+    """Replays queued responses; records calls."""
+
+    def __init__(self, *resps):
+        self.resps, self.calls = list(resps), []
+
+    def _next(self, method, url, **kw):
+        self.calls.append((method, url, kw))
+        return self.resps.pop(0)
+
+    def post(self, url, **kw):
+        return self._next("POST", url, **kw)
+
+    def request(self, method, url, **kw):
+        return self._next(method, url, **kw)
+
+
+TOK = {"access_token": "T1", "expires_in": 86400}
+OK = {"rt_cd": "0", "output": {"stck_prpr": "70000"}}
+
+
+def client(session, now=1000.0, tf=None, **kw):
+    t = [now]
+    c = KISClient("k", "s", "123", "01", session=session, token_file=tf or os.path.join(tempfile.mkdtemp(), "t.json"),
+                  clock=lambda: t[0], sleep=lambda s: None, limiter=RateLimiter(0, sleep=lambda s: None), **kw)
+    c._t = t
+    return c
+
+
+def test_mock_url_guard():
+    try:
+        KISClient("k", "s", "1", "01", base_url="https://openapi.koreainvestment.com:9443")
+    except ValueError:
+        return
+    raise AssertionError("live URL accepted")
+
+
+def test_token_cache_reuse_and_expiry():
+    tf = os.path.join(tempfile.mkdtemp(), "t.json")
+    s = FakeSession(Resp(200, TOK), Resp(200, OK), Resp(200, OK))
+    c = client(s, tf=tf)
+    c.get_price("005930")
+    c.get_price("005930")                      # memory reuse
+    assert [x[0] for x in s.calls].count("POST") == 1
+    s2 = FakeSession(Resp(200, OK))
+    c2 = client(s2, tf=tf)                     # new process, same file: reuse from disk
+    c2.get_price("005930")
+    assert s2.calls[0][2]["headers"]["authorization"] == "Bearer T1"
+    s3 = FakeSession(Resp(200, {"access_token": "T2", "expires_in": 86400}), Resp(200, OK))
+    c3 = client(s3, now=1000 + 86400 - 100, tf=tf)  # inside the 10 min margin: reissue
+    c3.get_price("005930")
+    assert s3.calls[0][1].endswith("/oauth2/tokenP") and c3._token["token"] == "T2"
+
+
+def test_rate_limiter():
+    t, slept = [0.0], []
+    rl = RateLimiter(0.5, clock=lambda: t[0], sleep=lambda s: (slept.append(s), t.__setitem__(0, t[0] + s)))
+    rl.wait()
+    rl.wait()
+    assert slept == [0.5]
+    t[0] += 10
+    rl.wait()
+    assert slept == [0.5]
+
+
+def test_retry_get_but_never_order():
+    s = FakeSession(Resp(200, TOK), Resp(500, {}), Resp(200, OK))
+    assert client(s).get_price("005930") == 70000
+    s = FakeSession(Resp(200, TOK), Resp(500, {"msg_cd": "EGW00201", "msg1": "rate"}), Resp(200, {"rt_cd": "0", "output": {"ODNO": "1"}}))
+    c = client(s)
+    try:
+        c.place_order("005930", "buy", 1)
+    except KISError:
+        pass
+    else:
+        raise AssertionError("expected KISError")
+    assert [x[0] for x in s.calls].count("POST") == 2  # token POST + exactly one order POST... order uses request()
+    assert sum(1 for x in s.calls if "order-cash" in x[1]) == 1
+
+
+def test_order_validation():
+    c = client(FakeSession())
+    for args in [("005930", "buy", 0), ("005930", "buy", 1.5), ("005930", "hold", 1)]:
+        try:
+            c.place_order(*args)
+        except ValueError:
+            continue
+        raise AssertionError(args)
+
+
+CFG = {"cash_buffer": 0.0, "max_daily_loss_pct": 3.0, "max_drawdown": 0.15}
+
+
+def test_kill_switch():
+    kf = os.path.join(tempfile.mkdtemp(), "KILL")
+    k = lambda eq, last, peak: trading.kill_reason(eq, last, peak, CFG, kf)
+    assert k(100, 100, 100) is None
+    assert k(98, 100, 100) is None
+    assert "previous run" in k(96, 100, 100)
+    assert k(100, None, None) is None  # first run: no baseline
+    open(kf, "w").close()
+    assert "KILL" in k(100, 100, 100)
+
+
+def test_drawdown_vs_peak():
+    kf = os.path.join(tempfile.mkdtemp(), "KILL")
+    assert trading.kill_reason(86, 86, 100, CFG, kf) is None  # 14% down, within the 15% limit
+    assert "peak" in trading.kill_reason(84, 84, 100, CFG, kf)
+    assert "peak" in trading.kill_reason(84, None, 100, CFG, kf)
+
+
+def test_reconcile_diff():
+    bal = {"orderable": 1000, "positions": {"A": {"qty": 5}, "C": {"qty": 1}}}
+    assert trading.reconcile(None, bal) == []
+    assert trading.reconcile({"cash": 1500, "positions": {"A": 5, "C": 1}}, bal) == []  # within tolerance
+    d = trading.reconcile({"cash": 9000, "positions": {"A": 4, "B": 2}}, bal)
+    assert len(d) == 4 and any("A:" in x for x in d) and any("B:" in x for x in d) and any("C:" in x for x in d) and any("cash" in x for x in d)
+
+
+def test_plan_orders_integer_cash_capped_and_zero_skip():
+    bal = {"orderable": 150, "equity": 1000, "positions": {"B": {"qty": 7}}}
+    o, sk = trading.plan_orders({"A": 1, "B": 0, "C": 1}, bal, {"A": 40, "C": 90}, CFG, 2)
+    assert ("B", "sell", 7) in o and ("A", "buy", 3) in o  # slice 500, cash 150 -> 3 shares at 40
+    assert sk == ["C"]                                       # 30 cash left < 90: 0 shares, reported
+    o, sk = trading.plan_orders({"A": 1}, {"orderable": 1000, "equity": 1000, "positions": {}}, {"A": 100}, {**CFG, "cash_buffer": 0.01}, 1)
+    assert o == [("A", "buy", 9)]                            # 1% buffer: 100*1.01 -> 9 shares, not 10
+
+
+def test_holidays_and_weekends():
+    import tomllib
+    from datetime import date
+    h = tomllib.load(open("config.toml", "rb"))["holidays"]
+    assert not trading.is_trading_day(date(2026, 10, 5), h)   # substitute holiday for Gaecheonjeol (Sat 10/3)
+    assert not trading.is_trading_day(date(2026, 10, 3), h)   # Saturday
+    assert not trading.is_trading_day(date(2026, 9, 25), h)   # Chuseok
+    assert not trading.is_trading_day(date(2027, 2, 9), h)    # Seollal substitute
+    assert trading.is_trading_day(date(2026, 10, 6), h)
+    assert trading.is_trading_day(date(2027, 6, 7), h)
+    try:
+        trading.is_trading_day(date(2028, 1, 4), h)
+    except ValueError:
+        return
+    raise AssertionError("uncovered year accepted")
+
+
+class FakeBroker:
+    def __init__(self):
+        self.orders = []
+
+    def get_balance(self):
+        return {"cash": 10_000_000, "orderable": 10_000_000, "equity": 10_000_000, "positions": {}}
+
+    def get_price(self, t):
+        return 100_000
+
+    def place_order(self, t, side, qty, order_type="market"):
+        self.orders.append((t, side, qty))
+        return str(len(self.orders))
+
+    def get_order_status(self, oid, day):
+        t, side, qty = self.orders[int(oid) - 1]
+        return {"qty": qty, "filled": qty, "avg_price": 100_000.0, "open": False}
+
+
+def run_main(argv, today):
+    """Runs trading.main in a temp dir with a synthetic DB and a fake broker; returns (broker, alerts, dir)."""
+    import shutil
+    import sqlite3
+    from datetime import date, timedelta
+    import data
+    d = tempfile.mkdtemp()
+    shutil.copy("config.toml", d)
+    old = os.getcwd()
+    os.chdir(d)
+    try:
+        cfg = {**__import__("tomllib").load(open("config.toml", "rb")), "db_path": "t.db"}
+        con = data.connect("t.db")
+        rows = [(t, (today - timedelta(days=k)).isoformat(), 1, 1, 1, 100 + (200 - k) * 0.1, 1) for t in cfg["live_tickers"] for k in range(1, 200)]
+        data.upsert(con, rows)
+        con.close()
+        b, alerts = FakeBroker(), []
+        trading.KISClient = lambda **kw: b
+        trading.send_alert = alerts.append
+        trading.time.sleep = lambda s: None
+        text = open("config.toml").read().replace('db_path = "ohlcv.db"', 'db_path = "t.db"')
+        open("config.toml", "w").write(text)
+        trading.main(argv, today)
+        return b, alerts, d
+    finally:
+        os.chdir(old)
+
+
+def test_dry_run_writes_nothing_and_orders_nothing():
+    from datetime import date
+    b, alerts, d = run_main(["--offline", "--dry-run"], date(2026, 10, 6))
+    assert b.orders == []
+    assert not os.path.exists(os.path.join(d, "last_run.txt")) and not os.path.exists(os.path.join(d, "state.json"))
+    assert any("dry run" in a for a in alerts)
+
+
+def test_real_run_orders_and_marks_run():
+    from datetime import date
+    b, alerts, d = run_main(["--offline"], date(2026, 10, 6))  # rising prices: all 5 tickers long
+    assert len(b.orders) == 5 and all(o[1] == "buy" and isinstance(o[2], int) and o[2] > 0 for o in b.orders)
+    assert open(os.path.join(d, "last_run.txt")).read() == "20261006"
+    st = json.load(open(os.path.join(d, "state.json")))
+    assert st["peak"] == 10_000_000
+
+
+if __name__ == "__main__":
+    for n, f in list(globals().items()):
+        if n.startswith("test_"):
+            f()
+            print("ok", n)

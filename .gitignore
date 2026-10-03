@@ -2,3 +2,7 @@
 *.db
 __pycache__/
 .venv/
+.kis_token.json
+KILL
+state.json
+last_run.txt

@@ -34,3 +34,39 @@ slippage = 0.001                 # applied against you on every fill
 
 fast = 20
 slow = 60
+
+# --- Phase 2 (KIS mock trading) ---
+kis_min_interval = 1.0           # seconds between KIS calls (mock returns HTTP 500 when hit faster)
+max_daily_loss_pct = 3.0         # kill switch: equity down this % vs the previous run's equity
+max_drawdown = 0.15              # kill switch: equity below (1 - this) * peak equity since start
+cash_buffer = 0.01               # size buys as if price were 1% higher (covers open gap + fees)
+
+# Live/paper universe: prices checked 2026-10-03 so one share fits an equal 1/5 slice of 10M (2M KRW).
+live_tickers = ["005930", "035420", "005380", "105560", "017670"]
+
+# KRX closed days (weekdays only; weekends are handled in code). Includes substitute holidays and year-end close.
+# Verify against the KRX calendar (open.krx.co.kr) each December; trading.py refuses to run in a year not listed here.
+holidays = [
+  # 2026
+  "2026-01-01", "2026-02-16", "2026-02-17", "2026-02-18",  # New Year; Seollal
+  "2026-03-02",                                            # Samiljeol (Sun 3/1) substitute
+  "2026-05-01", "2026-05-05",                              # Labor Day; Children's Day
+  "2026-05-25",                                            # Buddha's Birthday (Sun 5/24) substitute
+  "2026-06-03",                                            # local election day
+  "2026-08-17",                                            # Liberation Day (Sat 8/15) substitute
+  "2026-09-24", "2026-09-25",                              # Chuseok
+  "2026-10-05",                                            # Gaecheonjeol (Sat 10/3) substitute
+  "2026-10-09",                                            # Hangul Day
+  "2026-12-25", "2026-12-31",                              # Christmas; year-end close
+  # 2027
+  "2027-01-01",
+  "2027-02-08", "2027-02-09",                              # Seollal (Sun 2/7) + substitute
+  "2027-03-01",                                            # Samiljeol
+  "2027-05-05", "2027-05-13",                              # Children's Day; Buddha's Birthday
+  "2027-08-16",                                            # Liberation Day (Sun 8/15) substitute
+  "2027-09-14", "2027-09-15", "2027-09-16",                # Chuseok
+  "2027-10-04",                                            # Gaecheonjeol (Sun 10/3) substitute
+  "2027-10-11",                                            # Hangul Day (Sat 10/9) substitute
+  "2027-12-27",                                            # Christmas (Sat 12/25) substitute -- confirm
+  "2027-12-31",                                            # year-end close
+]
