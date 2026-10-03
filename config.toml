@@ -1,0 +1,36 @@
+# ~20 names across sectors; deliberately includes laggards (035720, 051900, 251270, 011170, 090430), not just winners.
+tickers = [
+  "005930",  # Samsung Electronics - tech
+  "000660",  # SK hynix - semis
+  "035420",  # NAVER - internet
+  "035720",  # Kakao - internet (5:1 split Apr 2021; adjustment check)
+  "005380",  # Hyundai Motor - autos
+  "000270",  # Kia - autos
+  "051900",  # LG H&H - consumer (down)
+  "006400",  # Samsung SDI - batteries
+  "068270",  # Celltrion - bio
+  "207940",  # Samsung Biologics - bio
+  "105560",  # KB Financial - banks
+  "055550",  # Shinhan Financial - banks
+  "005490",  # POSCO Holdings - steel
+  "015760",  # KEPCO - utility
+  "017670",  # SK Telecom - telecom
+  "033780",  # KT&G - staples (sideways)
+  "251270",  # Netmarble - games (down)
+  "011170",  # Lotte Chemical - chemicals (down)
+  "090430",  # Amorepacific - cosmetics (down)
+  "009540",  # HD Korea Shipbuilding - shipbuilding
+]
+start = "2020-01-01"
+split_date = "2024-01-01"        # in-sample < split_date <= out-of-sample (params are fixed, not fitted)
+# end = "2025-12-31"             # default: today
+db_path = "ohlcv.db"
+
+initial_cash = 10_000_000        # KRW
+# Verify against your broker's fee schedule and the current KRX tax rate before trusting results.
+commission = 0.00015             # per side
+sell_tax = 0.0020                # securities transaction tax, sell side only
+slippage = 0.001                 # applied against you on every fill
+
+fast = 20
+slow = 60
