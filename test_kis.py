@@ -129,11 +129,21 @@ def test_drawdown_vs_peak():
 
 
 def test_reconcile_diff():
-    bal = {"orderable": 1000, "positions": {"A": {"qty": 5}, "C": {"qty": 1}}}
-    assert trading.reconcile(None, bal) == []
-    assert trading.reconcile({"cash": 1500, "positions": {"A": 5, "C": 1}}, bal) == []  # within tolerance
-    d = trading.reconcile({"cash": 9000, "positions": {"A": 4, "B": 2}}, bal)
-    assert len(d) == 4 and any("A:" in x for x in d) and any("B:" in x for x in d) and any("C:" in x for x in d) and any("cash" in x for x in d)
+    live = ["A", "B", "C"]
+    bal = {"orderable": 1000, "positions": {"A": {"qty": 5}, "C": {"qty": 1}, "X": {"qty": 9}}}  # X: not a live ticker
+    assert trading.reconcile({"cash": 1500, "positions": {"A": 5, "C": 1}}, bal, live) == []  # cash within tolerance
+    d = trading.reconcile({"cash": 9000, "positions": {"A": 4, "B": 2}}, bal, live)
+    assert len(d) == 4 and any("A:" in x for x in d) and any("B:" in x for x in d) and any("cash" in x for x in d)
+    assert any("C:" in x and "did not create" in x for x in d) and not any("X" in x for x in d)
+
+
+def test_apply_fill_costs():
+    cfg = {"commission": 0.001, "sell_tax": 0.002}
+    s = {"cash": 100_000, "positions": {}}
+    trading.apply_fill(s, cfg, "A", "buy", 3, 10_000)
+    assert s["positions"] == {"A": 3} and abs(s["cash"] - (100_000 - 30_030)) < 1e-9
+    trading.apply_fill(s, cfg, "A", "sell", 3, 11_000)
+    assert s["positions"] == {} and abs(s["cash"] - (69_970 + 33_000 * (1 - 0.003))) < 1e-9
 
 
 def test_plan_orders_integer_cash_capped_and_zero_skip():
@@ -163,14 +173,14 @@ def test_holidays_and_weekends():
 
 
 class FakeBroker:
-    def __init__(self):
-        self.orders = []
+    def __init__(self, price=10_000, positions=None, equity=10_000_000):
+        self.orders, self.price, self.positions, self.equity = [], price, positions or {}, equity
 
     def get_balance(self):
-        return {"cash": 10_000_000, "orderable": 10_000_000, "equity": 10_000_000, "positions": {}}
+        return {"cash": 10_000_000, "orderable": 10_000_000, "equity": self.equity, "positions": self.positions}
 
     def get_price(self, t):
-        return 100_000
+        return self.price
 
     def place_order(self, t, side, qty, order_type="market"):
         self.orders.append((t, side, qty))
@@ -178,10 +188,10 @@ class FakeBroker:
 
     def get_order_status(self, oid, day):
         t, side, qty = self.orders[int(oid) - 1]
-        return {"qty": qty, "filled": qty, "avg_price": 100_000.0, "open": False}
+        return {"qty": qty, "filled": qty, "avg_price": 10_000.0, "open": False}
 
 
-def run_main(argv, today):
+def run_main(argv, today, broker=None, state=None):
     """Runs trading.main in a temp dir with a synthetic DB and a fake broker; returns (broker, alerts, dir)."""
     import shutil
     import sqlite3
@@ -197,7 +207,9 @@ def run_main(argv, today):
         rows = [(t, (today - timedelta(days=k)).isoformat(), 1, 1, 1, 100 + (200 - k) * 0.1, 1) for t in cfg["live_tickers"] for k in range(1, 200)]
         data.upsert(con, rows)
         con.close()
-        b, alerts = FakeBroker(), []
+        b, alerts = broker or FakeBroker(), []
+        if state:
+            json.dump(state, open("state.json", "w"))
         trading.KISClient = lambda **kw: b
         trading.send_alert = alerts.append
         trading.time.sleep = lambda s: None
@@ -219,11 +231,23 @@ def test_dry_run_writes_nothing_and_orders_nothing():
 
 def test_real_run_orders_and_marks_run():
     from datetime import date
-    b, alerts, d = run_main(["--offline"], date(2026, 10, 6))  # rising prices: all 5 tickers long
-    assert len(b.orders) == 5 and all(o[1] == "buy" and isinstance(o[2], int) and o[2] > 0 for o in b.orders)
+    b, alerts, d = run_main(["--offline"], date(2026, 10, 6))  # rising prices: all live tickers long
+    assert len(b.orders) == 3 and all(o[1] == "buy" and isinstance(o[2], int) and o[2] > 0 for o in b.orders)
     assert open(os.path.join(d, "last_run.txt")).read() == "20261006"
     st = json.load(open(os.path.join(d, "state.json")))
-    assert st["peak"] == 10_000_000
+    assert st["peak"] == 140_000 and st["equity"] > 139_900  # sleeve, not the 10M account
+    assert set(st["positions"]) == {"015760", "035720", "251270"} and 0 < st["bot_cash"] < 140_000
+    assert any("sleeve" in a and "vs budget" in a for a in alerts)
+
+
+def test_kill_switch_uses_sleeve_not_account():
+    """Sleeve 140,000 -> 134,000 (-4.3%) while the 10M account moves 0.01%: the kill switch must fire."""
+    from datetime import date
+    state = {"bot_cash": 40_000, "equity": 140_000, "peak": 140_000, "positions": {"015760": 10}}
+    held = {"015760": {"qty": 10, "avg_price": 10_000.0, "name": "KEPCO"}}
+    b, alerts, d = run_main(["--offline"], date(2026, 10, 6), FakeBroker(price=9_400, positions=held, equity=9_999_000), state)
+    assert b.orders == [] and os.path.exists(os.path.join(d, "KILL"))
+    assert any("Emergency Freeze" in a and "previous run" in a for a in alerts)
 
 
 if __name__ == "__main__":

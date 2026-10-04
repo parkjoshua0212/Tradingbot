@@ -55,11 +55,13 @@ def format_reconcile_mismatch(diffs: list[str]) -> str:
     return f"🔍 **Audit Finding** — Mundo book not match broker book. Broker is source of truth, Mundo adjust.\n{body}"[:1900]
 
 
-def format_eod_summary(equity: int, cash: int, positions: dict, n_orders: int, dry_run: bool = False) -> str:
+def format_eod_summary(equity: int, cash: int, positions: dict, n_orders: int, budget: int, dry_run: bool = False) -> str:
+    """equity/cash are the bot's sleeve, not the broker account; P&L is vs the starting budget."""
     held = ", ".join(f"{p['name']} x{p['qty']}" for p in positions.values()) or "none"
     tag = " (dry run, no order was send)" if dry_run else ""
-    return (f"📈 **End-of-Day Wrap-Up**{tag} — Mundo total asset ₩{equity:,}, cash ₩{cash:,}. "
-            f"{n_orders} order today. Holdings: {held}. Please align on next steps.")[:1900]
+    pnl = equity - budget
+    return (f"📈 **End-of-Day Wrap-Up**{tag} — Mundo sleeve ₩{equity:,} ({pnl:+,} / {pnl / budget:+.1%} vs budget ₩{budget:,}), "
+            f"cash ₩{cash:,}. {n_orders} order today. Holdings: {held}. Please align on next steps.")[:1900]
 
 
 def format_test_alert() -> str:

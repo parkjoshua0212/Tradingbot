@@ -1,3 +1,4 @@
+import json
 import logging
 import statistics
 import sys
@@ -20,22 +21,31 @@ def med(xs):
     return statistics.median(xs) if xs else float("nan")
 
 
-def portfolio_report(con, cfg):
+def portfolio_report(con, cfg, save_to=None):
     """Live sizing rules (one cash pool, equal slices, integer shares, buffer) on the live universe: the paper-trading baseline."""
+    cfg = {**cfg, "initial_cash": cfg.get("budget_krw", cfg["initial_cash"])}
     dfs = {t: data.load(con, t) for t in cfg["live_tickers"]}
     strat, bh = (backtest.run_portfolio(dfs, cfg, always_long=x) for x in (False, True))
     split = pd.Timestamp(cfg["split_date"])
     print(f"\n=== live-sizing portfolio {cfg['live_tickers']} ===")
     print(f"{'':24}{'ret':>9}{'maxDD':>9}{'sharpe':>7}{'buys':>5}")
+    out = {}
     for label, res in (("strategy", strat), ("equal-wt B&H", bh)):
         eq = res["equity"]
         for per, part in (("all", eq), ("out-of-sample", eq[eq.index >= split])):
             base = cfg["initial_cash"] if per == "all" else eq[eq.index < split].iloc[-1]
             r = backtest._stats(part, base)
+            out[f"{label} {per}"] = {**{k: float(v) for k, v in r.items()}, "final_equity": float(part.iloc[-1])}
             print(f"{label + ' ' + per:24}{r['ret']:8.1%} {r['maxdd']:8.1%} {r['sharpe']:6.2f}{res['buys'] if label == 'strategy' and per == 'all' else '':>5}")
     zero = sorted({t for _, t in strat["skipped"]})
     if zero:
         print(f"rounded to 0 shares at least once: {zero}")
+    if save_to:
+        keys = ("live_tickers", "budget_krw", "fast", "slow", "commission", "sell_tax", "slippage", "cash_buffer", "split_date")
+        with open(save_to, "w", encoding="utf-8") as f:
+            json.dump({"config": {k: cfg.get(k) for k in keys}, "period": [str(strat["equity"].index[0].date()), str(strat["equity"].index[-1].date())],
+                       "buys": strat["buys"], "zero_share_tickers": zero, "results": out}, f, indent=2)
+        print(f"saved {save_to}")
 
 
 def main():
@@ -71,7 +81,7 @@ def main():
             print(f"{'MEDIAN':8}{med(x['ret'] for x in s):8.1%} {'':8} {med(x['sharpe'] for x in s):6.2f}"
                   f"{'':5}  |      {med(x['ret'] for x in b):8.1%} {'':8} {med(x['sharpe'] for x in b):6.2f}")
             print(f"strategy beat B&H on Sharpe: {beat}/{len(rs)} tickers")
-    portfolio_report(con, cfg)
+    portfolio_report(con, cfg, "baseline.json" if "--save-baseline" in sys.argv else None)
     send_alert(messages.format_backtest_summary(results))
 
 

@@ -63,11 +63,16 @@ def plan_orders(targets: dict, balance: dict, prices: dict, cfg: dict, n_slices:
     price * (1 + cash_buffer), integer shares; the pool shrinks by the buffered cost as buys are planned."""
     held = {t: p["qty"] for t, p in balance["positions"].items()}
     orders = [(t, "sell", held[t]) for t, want in targets.items() if want == 0 and held.get(t)]
-    cash, slice_, skipped = balance["orderable"], balance["equity"] / n_slices, []
+    equity, cash = balance["equity"], balance["orderable"]
+    budget = cfg.get("budget_krw")
+    if budget:  # act as if the account only held `budget`: cap equity and the cash pool
+        cash = min(cash, max(0, budget - (equity - balance["cash"])))  # budget minus current holdings value
+        equity = min(equity, budget)
+    slice_, skipped = equity / n_slices, []
     for t, want in targets.items():
         if want == 1 and not held.get(t):
             cost = prices[t] * (1 + cfg["cash_buffer"])
-            qty = int(min(slice_, cash) // cost)
+            qty = int(min(slice_, cash) // cost) if cost > 0 else 0
             if qty > 0:
                 orders.append((t, "buy", qty))
                 cash -= qty * cost
@@ -87,9 +92,10 @@ def run_portfolio(dfs: dict, cfg: dict, always_long: bool = False) -> dict:
     sig = {t: signals(df["close"], cfg["fast"], cfg["slow"]).reindex(idx) for t, df in dfs.items()}
     cash, shares, pending, equity, buys, skipped = cfg["initial_cash"], {t: 0 for t in dfs}, None, [], 0, []
     for i, d in enumerate(idx):
-        opens = {t: dfs[t]["open"].loc[d] for t in dfs}
+        # ponytail: the DB has a few open=0 bars (2021 splits/spin-offs); use that bar close instead of filling at 0
+        opens = {t: dfs[t]["open"].loc[d] or dfs[t]["close"].loc[d] for t in dfs}
         if pending is not None:
-            bal = {"orderable": cash, "equity": cash + sum(shares[t] * opens[t] for t in dfs),
+            bal = {"cash": cash, "orderable": cash, "equity": cash + sum(shares[t] * opens[t] for t in dfs),
                    "positions": {t: {"qty": n} for t, n in shares.items() if n}}
             fills = {t: opens[t] * (1 + slip) for t in dfs}
             orders, sk = plan_orders(pending, bal, fills, cfg, len(dfs))
