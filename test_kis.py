@@ -172,6 +172,68 @@ def test_holidays_and_weekends():
     raise AssertionError("uncovered year accepted")
 
 
+class LateBroker:
+    """Order statuses are whatever the test sets in .fill[oid] = (cumulative filled, avg price)."""
+    def __init__(self):
+        self.orders, self.fill = [], {}
+
+    def place_order(self, t, side, qty, order_type="market"):
+        self.orders.append(qty)
+        return str(len(self.orders))
+
+    def get_order_status(self, oid, day):
+        qty, (filled, avg) = self.orders[int(oid) - 1], self.fill.get(oid, (0, 0.0))
+        return {"qty": qty, "filled": filled, "avg_price": avg, "open": filled < qty}
+
+
+def _submit(b, qty=4):
+    trading.time.sleep, trading.send_alert = lambda s: None, lambda m: None
+    sleeve = {"cash": 100_000, "positions": {}, "orders": {}}
+    trading.execute(b, [("A", "buy", qty)], {}, "20261006", False, sleeve, COST, lambda: None)
+    return sleeve
+
+
+COST = {"commission": 0.001, "sell_tax": 0.002}
+
+
+def test_late_fill_booked_next_run():
+    b = LateBroker()
+    s = _submit(b)
+    assert s["positions"] == {} and s["cash"] == 100_000 and s["orders"]["1"]["status"] == "pending"  # nothing filled at poll time
+    b.fill["1"] = (4, 10_000.0)
+    trading.sync_orders(b, s, COST, "20261007")
+    assert s["positions"] == {"A": 4} and abs(s["cash"] - (100_000 - 40_040)) < 1e-9 and s["orders"]["1"]["status"] == "filled"
+
+
+def test_partial_fill_books_only_filled_qty_then_the_rest():
+    b = LateBroker()
+    s = _submit(b)
+    b.fill["1"] = (2, 10_000.0)
+    trading.sync_orders(b, s, COST, "20261006")  # same day: still working
+    assert s["positions"] == {"A": 2} and s["orders"]["1"]["status"] == "partial"
+    b.fill["1"] = (4, 10_500.0)  # cumulative: 42,000 total, so the second half cost 22,000
+    trading.sync_orders(b, s, COST, "20261006")
+    assert s["positions"] == {"A": 4} and abs(s["cash"] - (100_000 - 42_000 * 1.001)) < 1e-9
+    b2 = LateBroker()
+    s2 = _submit(b2)
+    b2.fill["1"] = (2, 10_000.0)
+    trading.sync_orders(b2, s2, COST, "20261007")  # next day, 2 of 4 filled: day order expired
+    assert s2["positions"] == {"A": 2} and s2["orders"]["1"]["status"] == "cancelled"
+
+
+def test_booking_is_idempotent():
+    import copy
+    b = LateBroker()
+    s = _submit(b)
+    b.fill["1"] = (3, 10_000.0)
+    trading.sync_orders(b, s, COST, "20261006")
+    once = copy.deepcopy(s)
+    trading.sync_orders(b, s, COST, "20261006")
+    trading.sync_orders(b, s, COST, "20261007")
+    assert s == {**once, "orders": {"1": {**once["orders"]["1"], "status": "cancelled"}}}  # only the expiry flag moved
+    assert s["positions"] == once["positions"] and s["cash"] == once["cash"]
+
+
 class FakeBroker:
     def __init__(self, price=10_000, positions=None, equity=10_000_000):
         self.orders, self.price, self.positions, self.equity = [], price, positions or {}, equity
@@ -237,6 +299,7 @@ def test_real_run_orders_and_marks_run():
     st = json.load(open(os.path.join(d, "state.json")))
     assert st["peak"] == 140_000 and st["equity"] > 139_900  # sleeve, not the 10M account
     assert set(st["positions"]) == {"015760", "035720", "251270"} and 0 < st["bot_cash"] < 140_000
+    assert len(st["orders"]) == 3 and all(o["status"] == "filled" for o in st["orders"].values())
     assert any("sleeve" in a and "vs budget" in a for a in alerts)
 
 

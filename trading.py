@@ -87,6 +87,31 @@ def apply_fill(sleeve, cfg, ticker, side, qty, price):
             pos.pop(ticker, None)
 
 
+def book_order(sleeve, cfg, oid, st):
+    """Book the not-yet-booked part of order `oid` from a broker status (cumulative filled qty and avg price).
+    Idempotent: only the increase over what was already booked is applied. Sets the order's status."""
+    o = sleeve["orders"][oid]
+    d = st["filled"] - o["booked_qty"]
+    if d > 0:
+        value = st["filled"] * st["avg_price"]
+        apply_fill(sleeve, cfg, o["ticker"], o["side"], d, (value - o["booked_value"]) / d)
+        o["booked_qty"], o["booked_value"] = st["filled"], value
+    o["status"] = ("filled" if st["filled"] >= o["qty"] else "cancelled" if not st["open"]
+                   else "partial" if st["filled"] else "pending")
+
+
+def sync_orders(client, sleeve, cfg, today_s):
+    """Book late/partial fills of saved orders that are still open. A day order still open after its day is expired."""
+    for oid, o in sleeve["orders"].items():
+        if o["status"] in ("filled", "cancelled"):
+            continue
+        st = client.get_order_status(oid, o["day"])
+        if st:
+            book_order(sleeve, cfg, oid, st)
+            if o["status"] in ("pending", "partial") and o["day"] < today_s:
+                o["status"] = "cancelled"
+
+
 def _load_state():
     try:
         with open(STATE_FILE, encoding="utf-8") as f:
@@ -95,7 +120,7 @@ def _load_state():
         return None
 
 
-def execute(client, orders, names, today_s, dry_run, sleeve, cfg) -> int:
+def execute(client, orders, names, today_s, dry_run, sleeve, cfg, save) -> int:
     n = 0
     for t, side, qty in orders:
         name = names.get(t, t)
@@ -109,6 +134,9 @@ def execute(client, orders, names, today_s, dry_run, sleeve, cfg) -> int:
             send_alert(messages.format_order_rejected(t, name, side, qty, str(e)))
             continue
         n += 1
+        sleeve["orders"][oid] = {"ticker": t, "side": side, "qty": qty, "day": today_s, "status": "pending",
+                                 "booked_qty": 0, "booked_value": 0.0}
+        save()  # persist the order number before anything else can fail
         send_alert(messages.format_order_submitted(t, name, side, qty))
         st = None
         for _ in range(5):  # ponytail: fixed 10s poll; an open/partial order is reported, not chased
@@ -116,8 +144,9 @@ def execute(client, orders, names, today_s, dry_run, sleeve, cfg) -> int:
             st = client.get_order_status(oid, today_s)
             if st and not st["open"]:
                 break
-        if st and st["filled"] > 0:  # a late fill of the rest is not seen here; reconcile flags it next run
-            apply_fill(sleeve, cfg, t, side, st["filled"], st["avg_price"])
+        if st:  # anything filling after this poll is booked by sync_orders on the next run
+            book_order(sleeve, cfg, oid, st)
+            save()
         if st and st["filled"] == qty:
             send_alert(messages.format_order_filled(t, name, side, qty, st["avg_price"]))
         else:
@@ -142,9 +171,17 @@ def main(argv, today: date | None = None):
     bal = client.get_balance()  # source of truth for positions; cash and P&L are the bot's own sleeve
     state = _load_state()
     budget = cfg["budget_krw"]
-    sleeve = ({"cash": state["bot_cash"], "positions": dict(state["positions"])} if state
-              else {"cash": budget, "positions": {}})
+    sleeve = ({"cash": state["bot_cash"], "positions": dict(state["positions"]), "orders": state.get("orders", {})} if state
+              else {"cash": budget, "positions": {}, "orders": {}})
     state = state or {}
+
+    def save(equity=state.get("equity"), peak=state.get("peak")):
+        if not dry_run:
+            with open(STATE_FILE, "w", encoding="utf-8") as f:
+                json.dump({"bot_cash": round(sleeve["cash"], 2), "equity": equity, "positions": sleeve["positions"],
+                           "orders": sleeve["orders"], "peak": peak}, f)
+
+    sync_orders(client, sleeve, cfg, today_s)  # before reconcile: late fills would otherwise look like mismatches
     diffs = reconcile(sleeve, bal, cfg["live_tickers"])
     if diffs:
         log.warning("reconciliation mismatch: %s", diffs)
@@ -174,15 +211,12 @@ def main(argv, today: date | None = None):
         if not dry_run:
             with open(LAST_RUN_FILE, "w") as f:
                 f.write(today_s)
-        n = execute(client, orders, names, today_s, dry_run, sleeve, cfg)
+        n = execute(client, orders, names, today_s, dry_run, sleeve, cfg, save)
 
     if n:
         equity = sleeve_equity(client, sleeve)
         names.update({t: p["name"] for t, p in client.get_balance()["positions"].items()})
-    if not dry_run:
-        with open(STATE_FILE, "w", encoding="utf-8") as f:
-            json.dump({"bot_cash": round(sleeve["cash"], 2), "equity": equity, "positions": sleeve["positions"],
-                       "peak": max(state.get("peak") or 0, equity0, equity)}, f)
+    save(equity, max(state.get("peak") or 0, equity0, equity))
     held = {t: {"name": names.get(t, t), "qty": q} for t, q in sleeve["positions"].items()}
     send_alert(messages.format_eod_summary(equity, round(sleeve["cash"]), held, n, budget, dry_run))
 
