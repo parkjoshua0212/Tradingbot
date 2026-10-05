@@ -1,4 +1,4 @@
-"""All Discord-facing text. Corporate Mundo voice; logs elsewhere stay plain."""
+"""All Discord-facing text. Plain and short; logs elsewhere stay plain too."""
 
 
 def format_backtest_summary(results: dict) -> str:
@@ -9,59 +9,59 @@ def format_backtest_summary(results: dict) -> str:
         xs = [x for x in xs if x == x]
         return statistics.median(xs) if xs else float("nan")
 
-    lines = ["📊 **Quarterly Synergy Report** — Mundo Strategy Division deliver result, very leverage."]
+    lines = ["📊 **Backtest results**"]
     for name, rs in results.items():
         if not rs:
-            lines.append(f"• {name}: no data. Department of Data is on lunch, please circle back.")
+            lines.append(f"• {name}: no data.")
             continue
         s = med(r["strategy"]["sharpe"] for r in rs.values())
         b = med(r["bh"]["sharpe"] for r in rs.values())
-        verdict = "Strategy exceed expectation, bonus for everyone!" if s > b else "Strategy underperform, Mundo schedule urgent alignment meeting."
+        verdict = "✅ Strategy beat buy-and-hold." if s > b else "❌ Strategy lost to buy-and-hold."
         lines.append(f"• **{name}**: strategy Sharpe {s:.2f} vs B&H {b:.2f} (median, {len(rs)} tickers). {verdict}")
     return "\n".join(lines)
 
 
 def format_error(exc: BaseException) -> str:
-    return f"🚨 **Incident Escalation** — Mundo system have critical blocker, no bandwidth to proceed.\n`{type(exc).__name__}: {exc}`"[:1900]
+    return f"🚨 **Bot error** — something broke.\n`{type(exc).__name__}: {exc}`"[:1900]
 
 
 def format_order_filled(ticker: str, name: str, side: str, qty: int, price: float) -> str:
-    verb = "acquire" if side.lower() == "buy" else "divest"
-    return f"💼 **Deal Closed** — Mundo {verb} {qty:,} share of {name} ({ticker}) at ₩{price:,.0f}. Win-win, very stakeholder value."
+    verb = "Bought" if side.lower() == "buy" else "Sold"
+    return f"💼 **Filled** — {verb} {qty:,} x {name} ({ticker}) at ₩{price:,.0f}."
 
 
 def format_order_submitted(ticker: str, name: str, side: str, qty: int) -> str:
-    return f"📨 **Action Item Submitted** — Mundo request {side} of {qty:,} share of {name} ({ticker}). Pending approval from Market Department."
+    return f"📨 **Order sent** — {side} {qty:,} x {name} ({ticker})."
 
 
 def format_order_rejected(ticker: str, name: str, side: str, qty: int, reason: str) -> str:
-    return f"❌ **Request Denied** — Market Department say no to {side} {qty:,} {name} ({ticker}). Reason: {reason[:300]}. Mundo will take offline."
+    return f"❌ **Order rejected** — {side} {qty:,} x {name} ({ticker}). Reason: {reason[:300]}"
 
 
 def format_order_pending(ticker: str, name: str, side: str, qty: int) -> str:
-    return f"⏳ **Still In Pipeline** — {side} {qty:,} {name} ({ticker}) not yet fill. Mundo circle back later."
+    return f"⏳ **Not filled yet** — {side} {qty:,} x {name} ({ticker}). It will be checked next run."
 
 
 def format_skipped_zero_shares(ticker: str, price: float) -> str:
-    return f"⚠️ **Budget Constraint** — Mundo cannot afford even 1 share of {ticker} (₩{price:,.0f}) in this slice. Item descoped, please advise."
+    return f"⚠️ **Skipped buy** — 1 share of {ticker} (₩{price:,.0f}) costs more than its budget slice."
 
 
 def format_kill_switch(reason: str) -> str:
-    return f"🛑 **Emergency Freeze** — Mundo halt all new order, no more budget for risk. Reason: {reason[:500]}"
+    return f"🛑 **Trading stopped** — {reason[:500]}"
 
 
 def format_reconcile_mismatch(diffs: list[str]) -> str:
     body = "\n".join(f"• {d}" for d in diffs)
-    return f"🔍 **Audit Finding** — Mundo book not match broker book. Broker is source of truth, Mundo adjust.\n{body}"[:1900]
+    return f"🔍 **Mismatch** — bot records differ from the broker (broker is right):\n{body}"[:1900]
 
 
 def format_eod_summary(equity: int, cash: int, positions: dict, n_orders: int, budget: int, dry_run: bool = False) -> str:
     """equity/cash are the bot's sleeve, not the broker account; P&L is vs the starting budget."""
     held = ", ".join(f"{p['name']} x{p['qty']}" for p in positions.values()) or "none"
-    tag = " (dry run, no order was send)" if dry_run else ""
+    tag = " (dry run, no orders sent)" if dry_run else ""
     pnl = equity - budget
-    return (f"📈 **End-of-Day Wrap-Up**{tag} — Mundo sleeve ₩{equity:,} ({pnl:+,} / {pnl / budget:+.1%} vs budget ₩{budget:,}), "
-            f"cash ₩{cash:,}. {n_orders} order today. Holdings: {held}. Please align on next steps.")[:1900]
+    return (f"📈 **Daily summary**{tag} — bot money ₩{equity:,} ({pnl:+,} / {pnl / budget:+.1%} vs budget ₩{budget:,}), "
+            f"cash ₩{cash:,}. {n_orders} orders today. Holding: {held}.")[:1900]
 
 
 def format_outside_window(now: str, start: str, end: str) -> str:
@@ -69,4 +69,4 @@ def format_outside_window(now: str, start: str, end: str) -> str:
 
 
 def format_test_alert() -> str:
-    return "🔔 **Webhook Onboarding Complete** — Mundo notification pipeline is live. Please acknowledge receipt, per my last message."
+    return "🔔 **Test** — Discord alerts are working!"

@@ -312,7 +312,7 @@ def test_real_run_orders_and_marks_run():
     assert st["peak"] == 140_000 and st["equity"] > 139_900  # sleeve, not the 10M account
     assert set(st["positions"]) == {"015760", "035720", "251270"} and 0 < st["bot_cash"] < 140_000
     assert len(st["orders"]) == 3 and all(o["status"] == "filled" for o in st["orders"].values())
-    assert any("sleeve" in a and "vs budget" in a for a in alerts)
+    assert any("bot money" in a and "vs budget" in a for a in alerts)
 
 
 def test_kill_switch_uses_sleeve_not_account():
@@ -322,7 +322,7 @@ def test_kill_switch_uses_sleeve_not_account():
     held = {"015760": {"qty": 10, "avg_price": 10_000.0, "name": "KEPCO"}}
     b, alerts, d = run_main(["--offline"], date(2026, 10, 6), FakeBroker(price=9_400, positions=held, equity=9_999_000), state)
     assert b.orders == [] and os.path.exists(os.path.join(d, "KILL"))
-    assert any("Emergency Freeze" in a and "previous run" in a for a in alerts)
+    assert any("Trading stopped" in a and "previous run" in a for a in alerts)
 
 
 if __name__ == "__main__":
