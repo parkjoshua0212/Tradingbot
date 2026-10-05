@@ -229,11 +229,21 @@ def main(argv, now: datetime | None = None):
     send_alert(messages.format_eod_summary(equity, round(sleeve["cash"]), held, n, budget, dry_run))
 
 
+def keep_awake(on: bool):
+    """Windows only: stop the PC sleeping mid-run (ES_CONTINUOUS | ES_SYSTEM_REQUIRED); no-op elsewhere."""
+    if sys.platform == "win32":
+        import ctypes
+        ctypes.windll.kernel32.SetThreadExecutionState(0x80000000 | (0x00000001 if on else 0))
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    keep_awake(True)
     try:
         main(sys.argv)
     except Exception as e:
         log.exception("unhandled error")
         send_alert(messages.format_error(e))
         raise
+    finally:
+        keep_awake(False)
