@@ -64,5 +64,9 @@ def format_eod_summary(equity: int, cash: int, positions: dict, n_orders: int, b
             f"cash ₩{cash:,}. {n_orders} order today. Holdings: {held}. Please align on next steps.")[:1900]
 
 
+def format_outside_window(now: str, start: str, end: str) -> str:
+    return f"⏰ **No orders** — bot started at {now} KST, outside the trade window {start}-{end}. Nothing was sent."
+
+
 def format_test_alert() -> str:
     return "🔔 **Webhook Onboarding Complete** — Mundo notification pipeline is live. Please acknowledge receipt, per my last message."

@@ -10,6 +10,7 @@ def test_formatters():
         messages.format_order_filled("005930", "Samsung Electronics", "buy", 10, 70000),
         messages.format_order_filled("005930", "Samsung Electronics", "sell", 10, 70000),
         messages.format_test_alert(),
+        messages.format_outside_window('15:00', '09:00', '09:30'),
         messages.format_order_submitted("005930", "Samsung", "buy", 3),
         messages.format_order_rejected("005930", "Samsung", "buy", 3, "x" * 5000),
         messages.format_order_pending("005930", "Samsung", "sell", 3),

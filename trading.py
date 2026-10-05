@@ -6,7 +6,9 @@ import os
 import sys
 import time
 import tomllib
-from datetime import date
+from datetime import date, datetime
+from datetime import time as dtime
+from zoneinfo import ZoneInfo
 
 import backtest
 import data
@@ -154,14 +156,20 @@ def execute(client, orders, names, today_s, dry_run, sleeve, cfg, save) -> int:
     return n
 
 
-def main(argv, today: date | None = None):
+def main(argv, now: datetime | None = None):
     dry_run = "--dry-run" in argv
     with open("config.toml", "rb") as f:
         cfg = tomllib.load(f)
-    today = today or date.today()
+    now = now or datetime.now(ZoneInfo("Asia/Seoul"))  # KST regardless of the PC's timezone
+    today = now.date()
     today_s = today.strftime("%Y%m%d")
     if not is_trading_day(today, cfg["holidays"]):
         log.info("not a trading day, nothing to do")
+        return
+    start, end = (dtime.fromisoformat(cfg[k]) for k in ("trade_window_start", "trade_window_end"))
+    if not dry_run and not start <= now.time().replace(tzinfo=None) <= end:
+        log.error("outside trade window %s-%s KST (now %s); no orders", start, end, now.strftime("%H:%M:%S"))
+        send_alert(messages.format_outside_window(now.strftime("%H:%M"), cfg["trade_window_start"], cfg["trade_window_end"]))
         return
     client = KISClient(min_interval=cfg["kis_min_interval"])  # raises if not the mock URL
     if not dry_run and os.path.exists(LAST_RUN_FILE) and open(LAST_RUN_FILE).read().strip() == today_s:

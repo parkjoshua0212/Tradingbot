@@ -253,11 +253,11 @@ class FakeBroker:
         return {"qty": qty, "filled": qty, "avg_price": 10_000.0, "open": False}
 
 
-def run_main(argv, today, broker=None, state=None):
+def run_main(argv, today, broker=None, state=None, at=(9, 10)):
     """Runs trading.main in a temp dir with a synthetic DB and a fake broker; returns (broker, alerts, dir)."""
     import shutil
     import sqlite3
-    from datetime import date, timedelta
+    from datetime import date, datetime, time as dtime, timedelta
     import data
     d = tempfile.mkdtemp()
     shutil.copy("config.toml", d)
@@ -277,7 +277,7 @@ def run_main(argv, today, broker=None, state=None):
         trading.time.sleep = lambda s: None
         text = open("config.toml").read().replace('db_path = "ohlcv.db"', 'db_path = "t.db"')
         open("config.toml", "w").write(text)
-        trading.main(argv, today)
+        trading.main(argv, datetime.combine(today, dtime(*at)))
         return b, alerts, d
     finally:
         os.chdir(old)
@@ -288,6 +288,18 @@ def test_dry_run_writes_nothing_and_orders_nothing():
     b, alerts, d = run_main(["--offline", "--dry-run"], date(2026, 10, 6))
     assert b.orders == []
     assert not os.path.exists(os.path.join(d, "last_run.txt")) and not os.path.exists(os.path.join(d, "state.json"))
+    assert any("dry run" in a for a in alerts)
+
+
+def test_outside_window_blocks_real_run_but_not_dry_run():
+    from datetime import date
+    for at in [(8, 59), (9, 31), (15, 0)]:
+        b, alerts, d = run_main(["--offline"], date(2026, 10, 6), at=at)
+        assert b.orders == [] and len(alerts) == 1 and "09:00" in alerts[0]
+        assert not os.path.exists(os.path.join(d, "last_run.txt")) and not os.path.exists(os.path.join(d, "state.json"))
+    for at in [(9, 0), (9, 30)]:  # edges are inside
+        assert len(run_main(["--offline"], date(2026, 10, 6), at=at)[0].orders) == 3
+    b, alerts, d = run_main(["--offline", "--dry-run"], date(2026, 10, 6), at=(15, 0))
     assert any("dry run" in a for a in alerts)
 
 

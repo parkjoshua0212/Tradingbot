@@ -6,3 +6,4 @@ __pycache__/
 KILL
 state.json
 last_run.txt
+logs/

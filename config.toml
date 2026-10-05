@@ -39,6 +39,8 @@ slow = 60
 kis_min_interval = 1.0           # seconds between KIS calls (mock returns HTTP 500 when hit faster)
 max_daily_loss_pct = 3.0         # kill switch: equity down this % vs the previous run's equity
 max_drawdown = 0.15              # kill switch: equity below (1 - this) * peak equity since start
+trade_window_start = "09:00"     # KST: orders only inside this window on trading days (--dry-run ignores it)
+trade_window_end = "09:30"
 cash_buffer = 0.01               # size buys as if price were 1% higher (covers open gap + fees)
 
 # Live/paper universe. Previous 5-name list (fits a 10M slice): ["005930", "035420", "005380", "105560", "017670"]
