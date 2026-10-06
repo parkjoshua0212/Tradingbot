@@ -70,3 +70,13 @@ def format_outside_window(now: str, start: str, end: str) -> str:
 
 def format_test_alert() -> str:
     return "🔔 **Test** — Discord alerts are working!"
+
+
+def format_order_test(oid: str, ticker: str, status: str, qty: int, value: float, before: tuple, after: tuple) -> str:
+    """before/after = (sleeve cash, {ticker: qty}, sleeve equity)."""
+    def sleeve(s):
+        held = ", ".join(f"{t} x{q}" for t, q in s[1].items()) or "none"
+        return f"cash ₩{s[0]:,.0f}, holding {held}, equity ₩{s[2]:,}"
+    fill = f"{qty} filled at ₩{value / qty:,.0f}" if qty else "not filled yet (booked on the next run)"
+    return (f"🧪 **Order test** — order {oid} for 1 x {ticker}: {fill} ({status}).\n"
+            f"Sleeve before: {sleeve(before)}\nSleeve after: {sleeve(after)}")
