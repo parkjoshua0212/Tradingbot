@@ -1,0 +1,18 @@
+# Top-N momentum backtest parameters. FIXED before looking at out-of-sample results: one run, no tuning.
+# Costs (commission, sell_tax, slippage, cash_buffer) are read from config.toml; nothing here touches live trading.
+db_path = "topn.db"              # separate from ohlcv.db (live tickers)
+index_code = "1028"              # KOSPI 200
+benchmark = "069500"             # KODEX 200
+start = "2020-01-01"
+split_date = "2024-01-01"        # in-sample < split_date <= out-of-sample
+snapshot_months = 1              # constituent snapshot cadence (task asked for >= quarterly)
+call_interval = 0.3              # seconds between pykrx calls
+
+n = 5
+sma_fast = 20
+sma_slow = 60
+mom_lookback = 120               # return over 120 bars ...
+mom_skip = 5                     # ... ending 5 bars before the decision close
+min_avg_value_krw = 5_000_000_000  # 20-day average traded value (close * volume) floor
+liq_window = 20
+budget_krw = 3_000_000
