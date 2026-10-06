@@ -75,7 +75,7 @@ def test_backfill_marks_order_test_and_is_repeatable():
 def test_signal_lines():
     cfg = {**CFG, "live_tickers": ["A", "B", "C"]}
     out = trading.signal_lines({"A": (32_100.4, 33_400.0), "B": (101.0, 100.0)}, cfg, {"A": "KEPCO"})
-    assert out == ["KEPCO (A): SMA20 32,100 < SMA60 33,400 \u2192 flat", "B: SMA20 101 > SMA60 100 \u2192 long",
+    assert out == ["KEPCO: SMA20 32,100 < SMA60 33,400 \u2192 flat", "B: SMA20 101 > SMA60 100 \u2192 long",
                    "C: no fresh signal (stale or short data)"]
 
 

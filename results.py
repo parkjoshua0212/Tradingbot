@@ -54,8 +54,10 @@ def day_row(date_s: str, *, equity, cash, prev_equity, budget, peak, sent=0, fil
 
 
 def log_daily(row: dict) -> bool:
-    """False (nothing written) if that date already has a row."""
-    if any(r["date"] == row["date"] for r in _read(DAILY)):
+    """False (nothing written) if that date already has a row. Deposit rows (notes start with "deposit") sit
+    beside the day's normal row and are unique per (date, notes)."""
+    key = lambda r: (r["date"], r["notes"]) if r["notes"].startswith("deposit") else (r["date"], "")  # noqa: E731
+    if any(key(r) == key(row) for r in _read(DAILY)):
         return False
     _append(DAILY, DAILY_COLS, row)
     return True

@@ -275,8 +275,8 @@ def run_main(argv, today, broker=None, state=None, at=(9, 10)):
         trading.KISClient = lambda **kw: b
         trading.send_alert = alerts.append
         trading.time.sleep = lambda s: None
-        text = open("config.toml").read().replace('db_path = "ohlcv.db"', 'db_path = "t.db"')
-        open("config.toml", "w").write(text)
+        text = open("config.toml", encoding="utf-8").read().replace('db_path = "ohlcv.db"', 'db_path = "t.db"')
+        open("config.toml", "w", encoding="utf-8").write(text)
         trading.main(argv, datetime.combine(today, dtime(*at)))
         return b, alerts, d
     finally:
@@ -309,8 +309,9 @@ def test_real_run_orders_and_marks_run():
     assert len(b.orders) == 3 and all(o[1] == "buy" and isinstance(o[2], int) and o[2] > 0 for o in b.orders)
     assert open(os.path.join(d, "last_run.txt")).read() == "20261006"
     st = json.load(open(os.path.join(d, "state.json")))
-    assert st["peak"] == 140_000 and st["equity"] > 139_900  # sleeve, not the 10M account
-    assert set(st["positions"]) == {"015760", "035720", "251270"} and 0 < st["bot_cash"] < 140_000
+    budget = __import__("tomllib").load(open("config.toml", "rb"))["budget_krw"]
+    assert st["peak"] == budget and st["equity"] > budget * 0.997  # sleeve, not the 10M account
+    assert set(st["positions"]) == {"015760", "035720", "251270"} and 0 < st["bot_cash"] < budget
     assert len(st["orders"]) == 3 and all(o["status"] == "filled" for o in st["orders"].values())
     assert any("bot money" in a and "vs budget" in a for a in alerts)
 

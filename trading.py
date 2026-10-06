@@ -51,10 +51,10 @@ def target_positions(con, cfg, today: date) -> dict[str, int]:
 
 
 def signal_lines(pairs: dict, cfg: dict, names: dict) -> list[str]:
-    """e.g. 'KEPCO (015760): SMA20 32,100 < SMA60 33,400 -> flat' for every live ticker."""
+    """e.g. 'KEPCO / 한국전력: SMA20 32,100 < SMA60 33,400 -> flat' for every live ticker."""
     out = []
     for t in cfg["live_tickers"]:
-        label = f"{names[t]} ({t})" if t in names else t
+        label = names.get(t, t)
         if t not in pairs:
             out.append(f"{label}: no fresh signal (stale or short data)")
             continue
@@ -62,6 +62,11 @@ def signal_lines(pairs: dict, cfg: dict, names: dict) -> list[str]:
         out.append(f"{label}: SMA{cfg['fast']} {f:,.0f} {'>' if f > s else '<' if f < s else '='} SMA{cfg['slow']} {s:,.0f}"
                    f" → {'long' if f > s else 'flat'}")
     return out
+
+
+def _names(positions: dict, cfg: dict) -> dict:
+    """Broker names for held tickers, overridden by the config.toml [names] table."""
+    return {**{t: p["name"] for t, p in positions.items()}, **cfg.get("names", {})}
 
 
 def _skip_row(dry_run, today: date, reason: str, budget: int):
@@ -228,7 +233,7 @@ def main(argv, now: datetime | None = None):
         if not dry_run:
             with open(STATE_FILE, "w", encoding="utf-8") as f:
                 json.dump({"bot_cash": round(sleeve["cash"], 2), "equity": equity, "positions": sleeve["positions"],
-                           "orders": sleeve["orders"], "peak": peak}, f)
+                           "orders": sleeve["orders"], "peak": peak, "deposits": state.get("deposits", [])}, f)
 
     sync_orders(client, sleeve, cfg, today_s)  # before reconcile: late fills would otherwise look like mismatches
     old_ids, lines = set(sleeve["orders"]), []
@@ -239,7 +244,7 @@ def main(argv, now: datetime | None = None):
 
     n = 0
     equity0 = equity = sleeve_equity(client, sleeve)
-    names = {t: p["name"] for t, p in bal["positions"].items()}
+    names = _names(bal["positions"], cfg)
     reason = kill_reason(equity, state.get("equity"), state.get("peak"), cfg)
     if reason:
         log.error("kill switch: %s", reason)
@@ -269,7 +274,7 @@ def main(argv, now: datetime | None = None):
 
     if n:
         equity = sleeve_equity(client, sleeve)
-        names.update({t: p["name"] for t, p in client.get_balance()["positions"].items()})
+        names.update(_names(client.get_balance()["positions"], cfg))
     peak = max(state.get("peak") or 0, equity0, equity)
     save(equity, peak)
     if not dry_run:

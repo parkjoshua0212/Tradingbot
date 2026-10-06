@@ -35,14 +35,14 @@ def buy_one(client, cfg, now: datetime) -> str:
     t = min(prices, key=prices.get)
     if sleeve["cash"] < prices[t] * (1 + cfg["cash_buffer"]):
         raise SystemExit(f"refusing: sleeve cash {sleeve['cash']:,.0f} cannot buy 1 x {t} at {prices[t]:,}")
-    names = {tk: p["name"] for tk, p in client.get_balance()["positions"].items()}
+    names = trading._names(client.get_balance()["positions"], cfg)
     before = (sleeve["cash"], dict(sleeve["positions"]), trading.sleeve_equity(client, sleeve))
     old_orders = set(sleeve["orders"])
 
     def save(equity=state.get("equity"), peak=state.get("peak")):
         with open(trading.STATE_FILE, "w", encoding="utf-8") as f:
             json.dump({"bot_cash": round(sleeve["cash"], 2), "equity": equity, "positions": sleeve["positions"],
-                       "orders": sleeve["orders"], "peak": peak}, f)
+                       "orders": sleeve["orders"], "peak": peak, "deposits": state.get("deposits", [])}, f)
 
     if not trading.execute(client, [(t, "buy", 1)], names, today_s, False, sleeve, cfg, save):
         raise SystemExit(f"order for {t} was rejected, see log; state.json unchanged")
@@ -51,7 +51,7 @@ def buy_one(client, cfg, now: datetime) -> str:
     o = sleeve["orders"][oid]
     o["source"] = "order_test"
     save(equity, max(state.get("peak") or 0, before[2], equity))
-    names.update({tk: p["name"] for tk, p in client.get_balance()["positions"].items()})
+    names.update(trading._names(client.get_balance()["positions"], cfg))
     try:  # trades.csv only; a test order is not a daily run
         results.log_trades(sleeve["orders"], cfg, names, now)
     except Exception as e:

@@ -46,9 +46,11 @@ cash_buffer = 0.01               # size buys as if price were 1% higher (covers 
 # Live/paper universe. Previous 5-name list (fits a 10M slice): ["005930", "035420", "005380", "105560", "017670"]
 # Small-account test: cheap names (prices 2026-10-03: 30k, 33k, 35k) so one share fits a slice of the budget below.
 live_tickers = ["015760", "035720", "251270"]
-# The bot's own sleeve (about $100 at 1,400 KRW/USD): required. trading.py tracks its cash and positions in state.json;
+# The bot's own sleeve: required. trading.py tracks its cash and positions in state.json;
 # kill switch, sizing and P&L use the sleeve, not the mock account (10M, cannot change).
-budget_krw = 140_000
+# budget_krw = TOTAL capital deposited so far (P&L base). To add capital: raise it AND run `python deposit.py AMOUNT --confirm`
+# (adds the cash and shifts the kill-switch baselines so the deposit is not counted as profit). 140,000 + 2,860,000 on 2026-10-06.
+budget_krw = 3_000_000
 
 # KRX closed days (weekdays only; weekends are handled in code). Includes substitute holidays and year-end close.
 # Verify against the KRX calendar (open.krx.co.kr) each December; trading.py refuses to run in a year not listed here.
@@ -76,3 +78,9 @@ holidays = [
   "2027-12-27",                                            # Christmas (Sat 12/25) substitute -- confirm
   "2027-12-31",                                            # year-end close
 ]
+
+# Display names for live_tickers (dry-run SMA lines, Discord, trades.csv). Must stay last: a table swallows keys after it.
+[names]
+"015760" = "KEPCO / 한국전력"
+"035720" = "Kakao / 카카오"
+"251270" = "Netmarble / 넷마블"
