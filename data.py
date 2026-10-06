@@ -1,5 +1,6 @@
 import os
 import sqlite3
+import sys
 from datetime import date
 
 import pandas as pd
@@ -34,6 +35,13 @@ def load_env(path: str = ".env") -> None:
 
 
 load_env()
+
+
+def utf8_stdio() -> None:
+    """Entry points call this first: a cp1252 console/redirect must not crash on Korean text."""
+    for s in (sys.stdout, sys.stderr):
+        if s is not None:
+            s.reconfigure(encoding="utf-8", errors="replace")
 
 
 def connect(path: str) -> sqlite3.Connection:

@@ -237,6 +237,7 @@ def keep_awake(on: bool):
 
 
 if __name__ == "__main__":
+    data.utf8_stdio()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     keep_awake(True)
     try:

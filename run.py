@@ -86,6 +86,7 @@ def main():
 
 
 if __name__ == "__main__":
+    data.utf8_stdio()
     logging.basicConfig(level=logging.INFO)
     if "--test-alert" in sys.argv:
         send_alert(messages.format_test_alert())
