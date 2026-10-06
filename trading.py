@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 import backtest
 import data
 import messages
+import results
 from backtest import plan_orders  # shared with the portfolio backtest: one set of sizing rules
 from kis_client import KISClient, KISError
 from notifier import send_alert
@@ -28,8 +29,8 @@ def is_trading_day(d: date, holidays) -> bool:
     return d.weekday() < 5 and d.isoformat() not in holidays
 
 
-def target_positions(con, cfg, today: date) -> dict[str, int]:
-    """ticker -> 1 (want long) / 0 (want flat), from bars strictly before today. Stale/short data is skipped."""
+def sma_pairs(con, cfg, today: date) -> dict[str, tuple[float, float]]:
+    """ticker -> (fast SMA, slow SMA) from bars strictly before today. Stale/short data is skipped."""
     out = {}
     for t in cfg["live_tickers"]:
         df = data.load(con, t)
@@ -37,10 +38,48 @@ def target_positions(con, cfg, today: date) -> dict[str, int]:
         if len(df) <= cfg["slow"] + 1 or (today - df.index[-1].date()).days > 5:
             log.warning("%s: no fresh signal (%d bars)", t, len(df))
             continue
-        s = backtest.signals(df["close"], cfg["fast"], cfg["slow"]).iloc[-1]
-        if s == s:
-            out[t] = int(s)
+        c = df["close"]
+        f, s = c.rolling(cfg["fast"]).mean().iloc[-1], c.rolling(cfg["slow"]).mean().iloc[-1]
+        if s == s:  # same rule as backtest.signals: long iff fast > slow
+            out[t] = (f, s)
     return out
+
+
+def target_positions(con, cfg, today: date) -> dict[str, int]:
+    """ticker -> 1 (want long) / 0 (want flat)."""
+    return {t: int(f > s) for t, (f, s) in sma_pairs(con, cfg, today).items()}
+
+
+def signal_lines(pairs: dict, cfg: dict, names: dict) -> list[str]:
+    """e.g. 'KEPCO (015760): SMA20 32,100 < SMA60 33,400 -> flat' for every live ticker."""
+    out = []
+    for t in cfg["live_tickers"]:
+        label = f"{names[t]} ({t})" if t in names else t
+        if t not in pairs:
+            out.append(f"{label}: no fresh signal (stale or short data)")
+            continue
+        f, s = pairs[t]
+        out.append(f"{label}: SMA{cfg['fast']} {f:,.0f} {'>' if f > s else '<' if f < s else '='} SMA{cfg['slow']} {s:,.0f}"
+                   f" → {'long' if f > s else 'flat'}")
+    return out
+
+
+def _skip_row(dry_run, today: date, reason: str, budget: int):
+    """A row for a day nothing ran, with whatever the last state.json knew."""
+    if dry_run:
+        return
+    st = _load_state() or {}
+    _log_results(lambda: results.log_daily(results.day_row(today.isoformat(), equity=st.get("equity"), cash=st.get("bot_cash"),
+                                                           prev_equity=None, budget=budget, peak=st.get("peak"), notes=reason)))
+
+
+def _log_results(fn):
+    """Result logs must never break a run (e.g. the CSV is open in Excel and locked): alert and move on."""
+    try:
+        fn()
+    except Exception as e:
+        log.exception("result log failed")
+        send_alert(messages.format_log_failed(e))
 
 
 def kill_reason(equity, last_equity, peak, cfg, kill_file=KILL_FILE) -> str | None:
@@ -165,11 +204,13 @@ def main(argv, now: datetime | None = None):
     today_s = today.strftime("%Y%m%d")
     if not is_trading_day(today, cfg["holidays"]):
         log.info("not a trading day, nothing to do")
+        _skip_row(dry_run, today, "not a trading day (weekend/holiday)", cfg["budget_krw"])
         return
     start, end = (dtime.fromisoformat(cfg[k]) for k in ("trade_window_start", "trade_window_end"))
     if not dry_run and not start <= now.time().replace(tzinfo=None) <= end:
         log.error("outside trade window %s-%s KST (now %s); no orders", start, end, now.strftime("%H:%M:%S"))
         send_alert(messages.format_outside_window(now.strftime("%H:%M"), cfg["trade_window_start"], cfg["trade_window_end"]))
+        _skip_row(dry_run, today, f"outside trade window {start:%H:%M}-{end:%H:%M} (started {now:%H:%M})", cfg["budget_krw"])
         return
     client = KISClient(min_interval=cfg["kis_min_interval"])  # raises if not the mock URL
     if not dry_run and os.path.exists(LAST_RUN_FILE) and open(LAST_RUN_FILE).read().strip() == today_s:
@@ -190,6 +231,7 @@ def main(argv, now: datetime | None = None):
                            "orders": sleeve["orders"], "peak": peak}, f)
 
     sync_orders(client, sleeve, cfg, today_s)  # before reconcile: late fills would otherwise look like mismatches
+    old_ids, lines = set(sleeve["orders"]), []
     diffs = reconcile(sleeve, bal, cfg["live_tickers"])
     if diffs:
         log.warning("reconciliation mismatch: %s", diffs)
@@ -208,7 +250,11 @@ def main(argv, now: datetime | None = None):
         con = data.connect(cfg["db_path"])
         if "--offline" not in argv:
             data.backfill(con, cfg["live_tickers"], cfg["start"], cfg.get("end"))
-        targets = target_positions(con, cfg, today)
+        pairs = sma_pairs(con, cfg, today)
+        targets = {t: int(f > s) for t, (f, s) in pairs.items()}
+        lines = signal_lines(pairs, cfg, names)
+        for line in lines:
+            log.info(line)
         prices = {t: client.get_price(t) for t, w in targets.items() if w == 1 and t not in sleeve["positions"]}
         sleeve_bal = {"cash": sleeve["cash"], "orderable": min(sleeve["cash"], bal["orderable"]), "equity": equity,
                       "positions": {t: {"qty": q} for t, q in sleeve["positions"].items()}}
@@ -224,9 +270,19 @@ def main(argv, now: datetime | None = None):
     if n:
         equity = sleeve_equity(client, sleeve)
         names.update({t: p["name"] for t, p in client.get_balance()["positions"].items()})
-    save(equity, max(state.get("peak") or 0, equity0, equity))
+    peak = max(state.get("peak") or 0, equity0, equity)
+    save(equity, peak)
+    if not dry_run:
+        new = [sleeve["orders"][i] for i in sleeve["orders"] if i not in old_ids]
+        notes = "; ".join(([reason] if reason else []) + [f"mismatch: {d}" for d in diffs] +
+                          [f"{o['side']} {o['ticker']} {o['status']}" for o in new if o["status"] != "filled"])
+        _log_results(lambda: results.log_trades(sleeve["orders"], cfg, names, now))
+        _log_results(lambda: results.log_daily(results.day_row(
+            today.isoformat(), equity=equity, cash=sleeve["cash"], prev_equity=state.get("equity") or budget, budget=budget,
+            peak=peak, sent=n, filled=sum(o["status"] == "filled" for o in new), kill=bool(reason), reconcile_ok=not diffs,
+            notes=notes)))
     held = {t: {"name": names.get(t, t), "qty": q} for t, q in sleeve["positions"].items()}
-    send_alert(messages.format_eod_summary(equity, round(sleeve["cash"]), held, n, budget, dry_run))
+    send_alert(messages.format_eod_summary(equity, round(sleeve["cash"]), held, n, budget, dry_run, lines))
 
 
 def keep_awake(on: bool):

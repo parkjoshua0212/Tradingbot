@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 import data
 import kis_client
 import messages
+import results
 import trading
 from notifier import send_alert
 
@@ -46,9 +47,15 @@ def buy_one(client, cfg, now: datetime) -> str:
     if not trading.execute(client, [(t, "buy", 1)], names, today_s, False, sleeve, cfg, save):
         raise SystemExit(f"order for {t} was rejected, see log; state.json unchanged")
     equity = trading.sleeve_equity(client, sleeve)
-    save(equity, max(state.get("peak") or 0, before[2], equity))
     oid = (set(sleeve["orders"]) - old_orders).pop()
     o = sleeve["orders"][oid]
+    o["source"] = "order_test"
+    save(equity, max(state.get("peak") or 0, before[2], equity))
+    names.update({tk: p["name"] for tk, p in client.get_balance()["positions"].items()})
+    try:  # trades.csv only; a test order is not a daily run
+        results.log_trades(sleeve["orders"], cfg, names, now)
+    except Exception as e:
+        print("trades.csv not updated:", e)
     return messages.format_order_test(oid, t, o["status"], o["booked_qty"], o["booked_value"],
                                       before, (sleeve["cash"], sleeve["positions"], equity))
 

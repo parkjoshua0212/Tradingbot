@@ -55,13 +55,14 @@ def format_reconcile_mismatch(diffs: list[str]) -> str:
     return f"🔍 **Mismatch** — bot records differ from the broker (broker is right):\n{body}"[:1900]
 
 
-def format_eod_summary(equity: int, cash: int, positions: dict, n_orders: int, budget: int, dry_run: bool = False) -> str:
+def format_eod_summary(equity: int, cash: int, positions: dict, n_orders: int, budget: int, dry_run: bool = False,
+                       signals: list[str] = ()) -> str:
     """equity/cash are the bot's sleeve, not the broker account; P&L is vs the starting budget."""
     held = ", ".join(f"{p['name']} x{p['qty']}" for p in positions.values()) or "none"
     tag = " (dry run, no orders sent)" if dry_run else ""
     pnl = equity - budget
     return (f"📈 **Daily summary**{tag} — bot money ₩{equity:,} ({pnl:+,} / {pnl / budget:+.1%} vs budget ₩{budget:,}), "
-            f"cash ₩{cash:,}. {n_orders} orders today. Holding: {held}.")[:1900]
+            f"cash ₩{cash:,}. {n_orders} orders today. Holding: {held}." + "".join("\n" + line for line in signals))[:1900]
 
 
 def format_outside_window(now: str, start: str, end: str) -> str:
@@ -80,3 +81,7 @@ def format_order_test(oid: str, ticker: str, status: str, qty: int, value: float
     fill = f"{qty} filled at ₩{value / qty:,.0f}" if qty else "not filled yet (booked on the next run)"
     return (f"🧪 **Order test** — order {oid} for 1 x {ticker}: {fill} ({status}).\n"
             f"Sleeve before: {sleeve(before)}\nSleeve after: {sleeve(after)}")
+
+
+def format_log_failed(exc: BaseException) -> str:
+    return f"⚠️ **Result log failed** — orders are fine, but results/ was not updated (is the CSV open in Excel?). `{exc}`"[:1900]
