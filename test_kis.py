@@ -150,12 +150,29 @@ def test_apply_fill_costs():
 
 
 def test_plan_orders_integer_cash_capped_and_zero_skip():
-    bal = {"orderable": 150, "equity": 1000, "positions": {"B": {"qty": 7}}}
+    bal = {"cash": 150, "orderable": 150, "equity": 1000, "positions": {"B": {"qty": 7}}}
     o, sk = trading.plan_orders({"A": 1, "B": 0, "C": 1}, bal, {"A": 40, "C": 90}, CFG, 2)
     assert ("B", "sell", 7) in o and ("A", "buy", 3) in o  # slice 500, cash 150 -> 3 shares at 40
     assert sk == ["C"]                                       # 30 cash left < 90: 0 shares, reported
-    o, sk = trading.plan_orders({"A": 1}, {"orderable": 1000, "equity": 1000, "positions": {}}, {"A": 100}, {**CFG, "cash_buffer": 0.01}, 1)
+    o, sk = trading.plan_orders({"A": 1}, {"cash": 1000, "orderable": 1000, "equity": 1000, "positions": {}}, {"A": 100}, {**CFG, "cash_buffer": 0.01}, 1)
     assert o == [("A", "buy", 9)]                            # 1% buffer: 100*1.01 -> 9 shares, not 10
+
+
+def test_after_a_gain_buys_use_the_extra_sleeve_cash():
+    # budget 1,000,000; A bought for 500,000 is now worth 800,000: sleeve equity 1,500,000, sleeve cash 700,000
+    bal = {"cash": 700_000, "orderable": 9_000_000, "equity": 1_500_000, "positions": {"A": {"qty": 50}}}
+    cfg = {**CFG, "budget_krw": 1_000_000}  # P&L base only, never a sizing cap
+    plan = lambda b: trading.plan_orders({"A": 1, "B": 1}, b, {"B": 10_000}, cfg, 2)[0]
+    assert plan(bal) == [("B", "buy", 70)]  # slice 750,000, capped by sleeve cash 700,000 (old budget cap: 20 shares)
+    assert plan({**bal, "orderable": 300_000}) == [("B", "buy", 30)]  # broker orderable cash caps it too
+    # the live path: sleeve 2,000,000 cash + 100 x LIVE[0] bought at 10,000; the price doubles -> sleeve equity 4,000,000
+    from datetime import date
+    state = {"bot_cash": 2_000_000, "equity": 3_000_000, "peak": 3_000_000, "positions": {LIVE[0]: 100}, "orders": {}}
+    held = {LIVE[0]: {"qty": 100, "avg_price": 10_000.0, "name": "X"}}
+    b, alerts, d = run_main(["--offline"], date(2026, 10, 6), FakeBroker(price=20_000, positions=held), state)
+    assert b.orders[0] == (LIVE[1], "buy", 19)  # slice 4,000,000 / 10 at 20,200 buffered (budget cap: 14)
+    spent = sum(q for _, _, q in b.orders) * 20_000 * 1.01
+    assert 1_000_000 < spent <= 2_000_000  # more than the old cap left (budget - holdings), never more than sleeve cash
 
 
 def test_holidays_and_weekends():

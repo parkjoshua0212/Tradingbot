@@ -59,16 +59,13 @@ def evaluate(df: pd.DataFrame, res: dict, cfg: dict, lo: int, hi: int) -> dict |
 def plan_orders(targets: dict, balance: dict, prices: dict, cfg: dict, n_slices: int) -> tuple[list, list]:
     """Live sizing rules, shared by trading.py and run_portfolio so paper results are comparable.
     Returns ([(ticker, side, qty)], [tickers that rounded to 0 shares]). Sells (everything held) first.
-    Buys: one cash pool (balance["orderable"]), equal slice of equity per ticker, sized at
-    price * (1 + cash_buffer), integer shares; the pool shrinks by the buffered cost as buys are planned."""
+    Buys: equal slice of sleeve equity per ticker (gains are reinvested; budget_krw is only the P&L base), one cash pool
+    = min(sleeve cash, broker orderable cash), sized at price * (1 + cash_buffer), integer shares; the pool shrinks by
+    the buffered cost as buys are planned, so total buys never exceed either cash figure."""
     held = {t: p["qty"] for t, p in balance["positions"].items()}
     orders = [(t, "sell", held[t]) for t, want in targets.items() if want == 0 and held.get(t)]
-    equity, cash = balance["equity"], balance["orderable"]
-    budget = cfg.get("budget_krw")
-    if budget:  # act as if the account only held `budget`: cap equity and the cash pool
-        cash = min(cash, max(0, budget - (equity - balance["cash"])))  # budget minus current holdings value
-        equity = min(equity, budget)
-    slice_, skipped = equity / n_slices, []
+    cash = min(balance["cash"], balance["orderable"])
+    slice_, skipped = balance["equity"] / n_slices, []
     for t, want in targets.items():
         if want == 1 and not held.get(t):
             cost = prices[t] * (1 + cfg["cash_buffer"])

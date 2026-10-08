@@ -20,7 +20,7 @@ def load_cfg() -> dict:
     with open("topn.toml", "rb") as f:
         cfg = tomllib.load(f)
     cfg.update({k: live[k] for k in ("commission", "sell_tax", "slippage", "cash_buffer")})
-    cfg["initial_cash"] = cfg["budget_krw"]  # backtest compounds; plan_orders' budget cap is for the live sleeve, so unset
+    cfg["initial_cash"] = cfg["budget_krw"]  # starting capital; the backtest compounds (plan_orders sizes on equity)
     return cfg
 
 

@@ -261,7 +261,7 @@ def main(argv, now: datetime | None = None):
         for line in lines:
             log.info(line)
         prices = {t: client.get_price(t) for t, w in targets.items() if w == 1 and t not in sleeve["positions"]}
-        sleeve_bal = {"cash": sleeve["cash"], "orderable": min(sleeve["cash"], bal["orderable"]), "equity": equity,
+        sleeve_bal = {"cash": sleeve["cash"], "orderable": bal["orderable"], "equity": equity,  # plan_orders takes the min
                       "positions": {t: {"qty": q} for t, q in sleeve["positions"].items()}}
         orders, skipped = plan_orders(targets, sleeve_bal, prices, cfg, len(cfg["live_tickers"]))
         log.info("planned orders: %s; skipped (0 shares): %s", orders, skipped)
