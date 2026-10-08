@@ -78,7 +78,6 @@ def test_deposit_row_sits_beside_the_day_row_once():
 def test_names_table_used_for_lines_and_trades():
     with open("config.toml", "rb") as f:
         cfg = tomllib.load(f)
-    assert cfg["names"] == {"015760": "KEPCO / 한국전력", "035720": "Kakao / 카카오", "251270": "Netmarble / 넷마블"}
     assert set(cfg["names"]) == set(cfg["live_tickers"]) and cfg["budget_krw"] == BUDGET
     names = trading._names({"015760": {"name": "한국전력공사", "qty": 1}}, cfg)
     assert names["015760"] == "KEPCO / 한국전력"  # the table wins over the broker's name
@@ -86,7 +85,7 @@ def test_names_table_used_for_lines_and_trades():
     assert line.startswith("KEPCO / 한국전력: SMA20")
     b, alerts, d = test_kis.run_main(["--offline"], date(2026, 10, 6))
     assert {t["name"] for t in test_results.rows(d, "trades.csv")} == set(cfg["names"].values())
-    assert "Kakao / 카카오: SMA20" in alerts[-1]
+    assert all(f"{n}: SMA20" in alerts[-1] for n in cfg["names"].values())  # every name fits in one Discord message
 
 
 if __name__ == "__main__":

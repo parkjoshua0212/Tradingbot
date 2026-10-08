@@ -44,8 +44,9 @@ trade_window_end = "09:30"
 cash_buffer = 0.01               # size buys as if price were 1% higher (covers open gap + fees)
 
 # Live/paper universe. Previous 5-name list (fits a 10M slice): ["005930", "035420", "005380", "105560", "017670"]
-# Small-account test: cheap names (prices 2026-10-03: 30k, 33k, 35k) so one share fits a slice of the budget below.
-live_tickers = ["015760", "035720", "251270"]
+# Picked by rule, not returns (KRX data as of 2026-10-08): KOSPI 200 members, close <= 150,000 (a 300k slice buys >= 2 shares),
+# no ETFs/preferreds/halted, by market cap desc, max 2 per KRX sector (업종명). Previous 3-name test list: ["015760", "035720", "251270"]
+live_tickers = ["034020", "055550", "000270", "086790", "042660", "011200", "015760", "017670", "006800", "024110"]
 # The bot's own sleeve: required. trading.py tracks its cash and positions in state.json;
 # kill switch, sizing and P&L use the sleeve, not the mock account (10M, cannot change).
 # budget_krw = TOTAL capital deposited so far (P&L base). To add capital: raise it AND run `python deposit.py AMOUNT --confirm`
@@ -81,6 +82,13 @@ holidays = [
 
 # Display names for live_tickers (dry-run SMA lines, Discord, trades.csv). Must stay last: a table swallows keys after it.
 [names]
+"034020" = "Doosan Enerbility / 두산에너빌리티"
+"055550" = "Shinhan Financial / 신한지주"
+"000270" = "Kia / 기아"
+"086790" = "Hana Financial / 하나금융지주"
+"042660" = "Hanwha Ocean / 한화오션"
+"011200" = "HMM / HMM"
 "015760" = "KEPCO / 한국전력"
-"035720" = "Kakao / 카카오"
-"251270" = "Netmarble / 넷마블"
+"017670" = "SK Telecom / SK텔레콤"
+"006800" = "Mirae Asset Securities / 미래에셋증권"
+"024110" = "IBK / 기업은행"

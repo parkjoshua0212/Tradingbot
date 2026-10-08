@@ -83,13 +83,13 @@ def test_real_run_logs_once_dry_run_logs_nothing():
     b, alerts, d = test_kis.run_main(["--offline"], date(2026, 10, 6))
     (r,) = rows(d, "daily_results.csv")
     assert (r["date"], r["orders_sent"], r["orders_filled"], r["kill_switch_active"], r["reconcile_ok"]) == \
-        ("2026-10-06", "3", "3", "False", "True")
-    assert len(rows(d, "trades.csv")) == 3 and {t["source"] for t in rows(d, "trades.csv")} == {"trading"}
+        ("2026-10-06", str(len(test_kis.LIVE)), str(len(test_kis.LIVE)), "False", "True")
+    assert len(rows(d, "trades.csv")) == len(test_kis.LIVE) and {t["source"] for t in rows(d, "trades.csv")} == {"trading"}
     assert "SMA20" in alerts[-1] and "\u2192 long" in alerts[-1]
 
     b, alerts, d = test_kis.run_main(["--offline", "--dry-run"], date(2026, 10, 6))
     assert not os.path.exists(os.path.join(d, "results"))
-    assert sum("SMA20" in line for line in alerts[-1].splitlines()) == 3  # one line per live ticker
+    assert sum("SMA20" in line for line in alerts[-1].splitlines()) == len(test_kis.LIVE)  # one line per live ticker
 
 
 def test_skipped_days_get_a_row_with_reason():

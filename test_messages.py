@@ -27,3 +27,10 @@ def test_formatters():
 def test_eod_shows_sleeve_pnl():
     o = messages.format_eod_summary(137_200, 20_000, {}, 0, 140_000)
     assert "₩137,200" in o and "-2,800" in o and "-2.0%" in o and "₩140,000" in o
+
+
+if __name__ == "__main__":
+    for name, fn in list(globals().items()):
+        if name.startswith("test_"):
+            fn()
+            print("ok", name)

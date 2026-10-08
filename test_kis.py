@@ -2,10 +2,13 @@
 import json
 import os
 import tempfile
+import tomllib
 
 import kis_client
 import trading
 from kis_client import KISClient, KISError, RateLimiter
+
+LIVE = tomllib.load(open("config.toml", "rb"))["live_tickers"]
 
 
 class Resp:
@@ -298,7 +301,7 @@ def test_outside_window_blocks_real_run_but_not_dry_run():
         assert b.orders == [] and len(alerts) == 1 and "09:00" in alerts[0]
         assert not os.path.exists(os.path.join(d, "last_run.txt")) and not os.path.exists(os.path.join(d, "state.json"))
     for at in [(9, 0), (9, 30)]:  # edges are inside
-        assert len(run_main(["--offline"], date(2026, 10, 6), at=at)[0].orders) == 3
+        assert len(run_main(["--offline"], date(2026, 10, 6), at=at)[0].orders) == len(LIVE)
     b, alerts, d = run_main(["--offline", "--dry-run"], date(2026, 10, 6), at=(15, 0))
     assert any("dry run" in a for a in alerts)
 
@@ -306,13 +309,13 @@ def test_outside_window_blocks_real_run_but_not_dry_run():
 def test_real_run_orders_and_marks_run():
     from datetime import date
     b, alerts, d = run_main(["--offline"], date(2026, 10, 6))  # rising prices: all live tickers long
-    assert len(b.orders) == 3 and all(o[1] == "buy" and isinstance(o[2], int) and o[2] > 0 for o in b.orders)
+    assert len(b.orders) == len(LIVE) and all(o[1] == "buy" and isinstance(o[2], int) and o[2] > 0 for o in b.orders)
     assert open(os.path.join(d, "last_run.txt")).read() == "20261006"
     st = json.load(open(os.path.join(d, "state.json")))
     budget = __import__("tomllib").load(open("config.toml", "rb"))["budget_krw"]
     assert st["peak"] == budget and st["equity"] > budget * 0.997  # sleeve, not the 10M account
-    assert set(st["positions"]) == {"015760", "035720", "251270"} and 0 < st["bot_cash"] < budget
-    assert len(st["orders"]) == 3 and all(o["status"] == "filled" for o in st["orders"].values())
+    assert set(st["positions"]) == set(LIVE) and 0 < st["bot_cash"] < budget
+    assert len(st["orders"]) == len(LIVE) and all(o["status"] == "filled" for o in st["orders"].values())
     assert any("bot money" in a and "vs budget" in a for a in alerts)
 
 

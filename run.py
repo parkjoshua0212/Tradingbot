@@ -54,7 +54,7 @@ def main():
 
     con = data.connect(cfg["db_path"])
     if "--offline" not in sys.argv:
-        data.backfill(con, cfg["tickers"], cfg["start"], cfg.get("end"))
+        data.backfill(con, list(dict.fromkeys(cfg["tickers"] + cfg["live_tickers"])), cfg["start"], cfg.get("end"))
 
     results = {"in-sample": {}, "out-of-sample": {}}
     for t in cfg["tickers"]:
