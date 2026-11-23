@@ -12,9 +12,7 @@ os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")  # pykrx imports matplo
 
 from botocore.exceptions import ClientError  # noqa: E402
 
-import messages  # noqa: E402
-import trading  # noqa: E402
-from notifier import send_alert  # noqa: E402
+import messages  # noqa: E402  (no pandas; trading and notifier are imported in run())
 
 log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -82,7 +80,12 @@ def upload(s3, bucket: str) -> None:
             s3.upload_file(key, bucket, key)
 
 
-def run(env=os.environ, s3=None, ddb=None, ssm=None, main=trading.main, now: datetime | None = None) -> dict:
+def run(env=os.environ, s3=None, ddb=None, ssm=None, main=None, now: datetime | None = None) -> dict:
+    # Lazy: both pull in pandas, which took >10 s on a cold image pull and timed out Lambda's 10 s INIT phase.
+    # Here it loads inside the invoke, which has the full function timeout.
+    import trading
+    from notifier import send_alert
+    main = main or trading.main
     now = now or datetime.now(KST)
     dry = is_dry_run(env)
     bucket, table = env.get("STATE_BUCKET"), env.get("TABLE_NAME")

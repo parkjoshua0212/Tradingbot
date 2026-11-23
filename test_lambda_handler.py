@@ -1,5 +1,7 @@
 import json
 import os
+import subprocess
+import sys
 import tempfile
 from datetime import datetime
 
@@ -145,6 +147,13 @@ def test_only_new_or_changed_orders_are_written():
     _run(_aws_env("0"), s3=s3, ddb=ddb, ssm=FakeSSM(), main=main)
     assert sorted(ddb.items) == ["ORDER#2", "ORDER#3", "RUN#2026-11-24"]
     assert ddb.items["ORDER#2"]["status"] == {"S": "filled"}
+
+
+def test_import_does_not_load_pandas():
+    # Lambda's INIT phase (module import) has a 10 s limit; pandas alone exceeded it on a cold start
+    heavy = "{'trading', 'notifier', 'data', 'pandas'}"
+    code = f"import sys, lambda_handler; loaded = {heavy} & set(sys.modules); assert not loaded, loaded"
+    subprocess.run([sys.executable, "-c", code], cwd=os.path.dirname(os.path.abspath(lh.__file__)), check=True)
 
 
 def test_stale_kill_from_warm_container_is_cleared():
