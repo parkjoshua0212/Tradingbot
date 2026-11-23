@@ -9,3 +9,7 @@ last_run.txt
 logs/
 results/
 .env.local
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
