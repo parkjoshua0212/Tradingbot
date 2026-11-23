@@ -13,3 +13,4 @@ results/
 *.tfstate
 *.tfstate.*
 *.tfplan
+CLAUDE.md
