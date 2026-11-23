@@ -15,16 +15,19 @@ def _err(code):
 
 
 class FakeS3:
-    def __init__(self, files=None):
-        self.files = dict(files or {})
+    def __init__(self, files=None, fail_on=None):
+        self.files, self.fail_on, self.uploads = dict(files or {}), fail_on, []
 
     def download_file(self, bucket, key, filename):
+        if key == self.fail_on:
+            raise _err("AccessDenied")
         if key not in self.files:
             raise _err("404")
         with open(filename, "w", encoding="utf-8") as f:
             f.write(self.files[key])
 
     def upload_file(self, filename, bucket, key):
+        self.uploads.append(key)
         self.files[key] = open(filename, encoding="utf-8").read()
 
 
@@ -96,6 +99,28 @@ def test_second_real_run_same_day_never_calls_main():
     assert _run(_aws_env("0"), s3=s3, ddb=ddb, ssm=FakeSSM(), main=second)["status"] == "already_ran"
     assert first.calls == [["trading.py"]] and second.calls == []
     assert "RUN#2026-11-24" in ddb.items
+
+
+REAL_STATE = '{"bot_cash": 123.0, "orders": {}}'
+
+
+def test_exit_at_date_claim_uploads_nothing():
+    s3, ddb, main = FakeS3({"state.json": REAL_STATE}), FakeDDB(), FakeMain()
+    ddb.items["RUN#2026-11-24"] = {}  # an earlier invocation already claimed today
+    assert _run(_aws_env("0"), s3=s3, ddb=ddb, ssm=FakeSSM(), main=main)["status"] == "already_ran"
+    assert main.calls == [] and s3.uploads == [] and s3.files == {"state.json": REAL_STATE}
+
+
+def test_failed_download_uploads_nothing():
+    # state.json downloads fine, then a later file fails: the half-downloaded workdir must never be written back
+    s3, ddb, main = FakeS3({"state.json": REAL_STATE}, fail_on="last_run.txt"), FakeDDB(), FakeMain()
+    try:
+        _run(_aws_env("0"), s3=s3, ddb=ddb, ssm=FakeSSM(), main=main)
+        raise AssertionError("download error was swallowed")
+    except ClientError as e:
+        assert lh._code(e) == "AccessDenied"
+    assert main.calls == [] and s3.uploads == [] and s3.files == {"state.json": REAL_STATE}
+    assert list(ddb.items) == ["RUN#2026-11-24"]  # the day stays claimed: no orders, no retry without deleting it
 
 
 def test_state_and_orders_saved_when_main_raises():
