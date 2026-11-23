@@ -1,0 +1,3 @@
+-r requirements.txt
+pytest==9.2.0
+boto3==1.44.9  # the Lambda base image ships its own boto3; this is for local tests only

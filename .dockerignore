@@ -1,0 +1,7 @@
+# Allowlist: only code and config reach the image, so .env, state.json, tokens and DBs never can.
+*
+!*.py
+!config.toml
+!requirements.txt
+test_*.py
+smoke_test.py

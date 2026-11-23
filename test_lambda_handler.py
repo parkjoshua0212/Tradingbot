@@ -1,0 +1,133 @@
+import json
+import os
+import tempfile
+from datetime import datetime
+
+from botocore.exceptions import ClientError
+
+import lambda_handler as lh
+
+NOW = datetime(2026, 11, 24, 9, 5, tzinfo=lh.KST)
+
+
+def _err(code):
+    return ClientError({"Error": {"Code": code, "Message": ""}}, "op")
+
+
+class FakeS3:
+    def __init__(self, files=None):
+        self.files = dict(files or {})
+
+    def download_file(self, bucket, key, filename):
+        if key not in self.files:
+            raise _err("404")
+        with open(filename, "w", encoding="utf-8") as f:
+            f.write(self.files[key])
+
+    def upload_file(self, filename, bucket, key):
+        self.files[key] = open(filename, encoding="utf-8").read()
+
+
+class FakeDDB:
+    def __init__(self):
+        self.items = {}
+
+    def put_item(self, TableName, Item, ConditionExpression=None):
+        pk = Item["pk"]["S"]
+        if ConditionExpression and pk in self.items:
+            raise _err("ConditionalCheckFailedException")
+        self.items[pk] = Item
+
+
+class FakeSSM:
+    def get_parameters_by_path(self, Path, WithDecryption, NextToken=None):
+        assert WithDecryption
+        return {"Parameters": [{"Name": f"{Path}/LH_TEST_SECRET", "Value": "s3cret"}]}
+
+
+class FakeMain:
+    def __init__(self, write_state=None, raises=None):
+        self.calls, self.write_state, self.raises = [], write_state, raises
+
+    def __call__(self, argv, now):
+        self.calls.append(argv)
+        self.saw_kill = os.path.exists("KILL")
+        if self.write_state:
+            json.dump(self.write_state, open("state.json", "w", encoding="utf-8"))
+        if self.raises:
+            raise self.raises
+
+
+def _run(env, **kw):
+    """Run in a temp workdir and restore the cwd (other tests read config.toml relative to the repo)."""
+    cwd = os.getcwd()
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            return lh.run(env={"BOT_WORKDIR": os.path.join(d, "bot"), **env}, now=NOW, **kw)
+    finally:
+        os.chdir(cwd)
+        os.environ.pop("LH_TEST_SECRET", None)
+
+
+def _aws_env(dry):
+    return {"STATE_BUCKET": "b", "TABLE_NAME": "t", "PARAM_PATH": "/tradingbot/test", "DRY_RUN": dry}
+
+
+def test_dry_run_flag_reaches_trading_main():
+    # trading.main decides with `"--dry-run" in argv`, so the flag must be in argv. Unset or unknown = dry (fail-safe).
+    for dry_env, expect_dry in [({}, True), ({"DRY_RUN": "1"}, True), ({"DRY_RUN": "true"}, True), ({"DRY_RUN": "0"}, False)]:
+        main = FakeMain()
+        out = _run(dry_env, main=main)
+        assert ("--dry-run" in main.calls[0]) == expect_dry, (dry_env, main.calls)
+        assert out["dry_run"] == expect_dry
+
+
+def test_dry_run_on_aws_never_claims_or_writes():
+    s3, ddb, main = FakeS3({"state.json": '{"orders": {}}'}), FakeDDB(), FakeMain(write_state={"orders": {"1": {"qty": 1}}})
+    _run(_aws_env("1"), s3=s3, ddb=ddb, ssm=FakeSSM(), main=main)
+    assert main.calls == [["trading.py", "--dry-run"]]
+    assert ddb.items == {} and s3.files == {"state.json": '{"orders": {}}'}
+
+
+def test_second_real_run_same_day_never_calls_main():
+    s3, ddb = FakeS3(), FakeDDB()
+    first, second = FakeMain(), FakeMain()
+    assert _run(_aws_env("0"), s3=s3, ddb=ddb, ssm=FakeSSM(), main=first)["status"] == "ok"
+    assert _run(_aws_env("0"), s3=s3, ddb=ddb, ssm=FakeSSM(), main=second)["status"] == "already_ran"
+    assert first.calls == [["trading.py"]] and second.calls == []
+    assert "RUN#2026-11-24" in ddb.items
+
+
+def test_state_and_orders_saved_when_main_raises():
+    order = {"ticker": "015760", "side": "buy", "qty": 3, "day": "20261124", "status": "pending",
+             "booked_qty": 0, "booked_value": 0.0}
+    s3, ddb = FakeS3(), FakeDDB()
+    main = FakeMain(write_state={"bot_cash": 1.0, "orders": {"0001": order}}, raises=RuntimeError("boom"))
+    try:
+        _run(_aws_env("0"), s3=s3, ddb=ddb, ssm=FakeSSM(), main=main)
+        raise AssertionError("error was swallowed")
+    except RuntimeError:
+        pass
+    assert json.loads(s3.files["state.json"])["orders"]["0001"]["ticker"] == "015760"
+    assert ddb.items["ORDER#0001"]["qty"] == {"N": "3"} and ddb.items["ORDER#0001"]["side"] == {"S": "buy"}
+
+
+def test_stale_kill_from_warm_container_is_cleared():
+    with tempfile.TemporaryDirectory() as d:
+        work = os.path.join(d, "bot")
+        os.makedirs(work)
+        open(os.path.join(work, "KILL"), "w").write("old")  # deleted from S3 since, so it must not survive
+        main, cwd = FakeMain(), os.getcwd()
+        try:
+            lh.run(env={**_aws_env("0"), "BOT_WORKDIR": work}, s3=FakeS3(), ddb=FakeDDB(), ssm=FakeSSM(), main=main, now=NOW)
+        finally:
+            os.chdir(cwd)
+            os.environ.pop("LH_TEST_SECRET", None)
+        assert main.saw_kill is False
+
+
+if __name__ == "__main__":
+    for n, f in list(globals().items()):
+        if n.startswith("test_"):
+            f()
+            print("ok", n)
