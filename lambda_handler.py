@@ -57,10 +57,12 @@ def claim_day(ddb, table: str, day: str, now: datetime) -> bool:
         raise
 
 
-def save_orders(ddb, table: str, orders: dict) -> None:
-    """One item per order, overwritten each run (idempotent): the latest booked status wins.
-    shortcut: rewrites every order ever placed, a few per day; write only changed orders if this grows."""
+def save_orders(ddb, table: str, orders: dict, before: dict) -> None:
+    """One item per new or changed order (keeps writes under 1 WCU); unchanged ones are already in the table.
+    shortcut: a write that fails after the S3 upload is not retried unless that order changes again; state.json is the ledger."""
     for oid, o in orders.items():
+        if before.get(oid) == o:
+            continue
         item = {k: {"N": str(v)} if isinstance(v, (int, float)) else {"S": str(v)} for k, v in o.items()}
         ddb.put_item(TableName=table, Item={**item, "pk": {"S": f"ORDER#{oid}"}})
 
@@ -96,6 +98,7 @@ def run(env=os.environ, s3=None, ddb=None, ssm=None, main=trading.main, now: dat
             log.warning("%s already claimed by an earlier invocation; exiting without trading", now.date())
             return {"status": "already_ran", "dry_run": dry}
         download(s3, bucket)  # dry runs read the real state too, they just never write it back
+        before = (trading._load_state() or {}).get("orders", {})
 
     argv = ["trading.py"] + (["--dry-run"] if dry else [])
     log.info("calling trading.main(%s)", argv)
@@ -108,7 +111,7 @@ def run(env=os.environ, s3=None, ddb=None, ssm=None, main=trading.main, now: dat
     finally:
         if bucket and not dry:
             upload(s3, bucket)  # state first: it is the ledger
-            save_orders(ddb, table, (trading._load_state() or {}).get("orders", {}))
+            save_orders(ddb, table, (trading._load_state() or {}).get("orders", {}), before)
     return {"status": "ok", "dry_run": dry}
 
 

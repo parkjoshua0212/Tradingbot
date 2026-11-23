@@ -137,6 +137,16 @@ def test_state_and_orders_saved_when_main_raises():
     assert ddb.items["ORDER#0001"]["qty"] == {"N": "3"} and ddb.items["ORDER#0001"]["side"] == {"S": "buy"}
 
 
+def test_only_new_or_changed_orders_are_written():
+    # provisioned 1 WCU: rewriting every order ever placed would eventually throttle
+    o1, o2 = {"qty": 1, "status": "filled"}, {"qty": 2, "status": "pending"}
+    s3, ddb = FakeS3({"state.json": json.dumps({"orders": {"1": o1, "2": o2}})}), FakeDDB()
+    main = FakeMain(write_state={"orders": {"1": o1, "2": {**o2, "status": "filled"}, "3": {"qty": 3, "status": "pending"}}})
+    _run(_aws_env("0"), s3=s3, ddb=ddb, ssm=FakeSSM(), main=main)
+    assert sorted(ddb.items) == ["ORDER#2", "ORDER#3", "RUN#2026-11-24"]
+    assert ddb.items["ORDER#2"]["status"] == {"S": "filled"}
+
+
 def test_stale_kill_from_warm_container_is_cleared():
     with tempfile.TemporaryDirectory() as d:
         work = os.path.join(d, "bot")
